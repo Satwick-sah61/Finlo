@@ -2,13 +2,15 @@ import { Menu, Bell, ShieldCheck } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 
 const PAGE_TITLES = {
-  '/dashboard': 'Dashboard',
-  '/income': 'Income Streams',
-  '/expenses': 'Expenses',
-  '/goals': 'Goals',
-  '/loans': 'Loan Manager',
+  '/dashboard':   'Dashboard',
+  '/income':      'Income Streams',
+  '/expenses':    'Expenses',
+  '/goals':       'Goals',
+  '/loans':       'Loan Manager',
   '/investments': 'Investments',
-  '/ai': 'AI Advisor',
+  '/whatif':      'What-If Simulator',
+  '/ai':          'AI Advisor',
+  '/settings':    'Settings',
 }
 
 export default function TopBar({ onToggleSidebar }) {
