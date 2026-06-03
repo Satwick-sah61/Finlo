@@ -4,58 +4,72 @@ import { useAppStore } from '../store/appStore.js'
 
 // app_config stores plaintext only (salt, sentinel, onboarding_complete, theme)
 // All user financial tables use per-field encryption via db/helpers.js
-// Version 2 adds 'month' index to expenses for efficient month-range queries
-// Version 3 adds loan_documents table for encrypted document storage
+// v2: month index on expenses
+// v3: loan_documents table
+// v4: asset_class index on investments
+// v5: expense_logs table (date + category as plaintext indexes for efficient queries)
 
 export const db = new Dexie('finio')
 
 db.version(1).stores({
   income_streams: '++id, created_at',
-  expenses: '++id, created_at',
-  goals: '++id, created_at',
-  loans: '++id, created_at',
-  investments: '++id, created_at',
-  reminders: '++id, created_at',
-  app_config: 'key',
+  expenses:       '++id, created_at',
+  goals:          '++id, created_at',
+  loans:          '++id, created_at',
+  investments:    '++id, created_at',
+  reminders:      '++id, created_at',
+  app_config:     'key',
 })
 
 db.version(2).stores({
   income_streams: '++id, created_at',
-  expenses: '++id, created_at, month', // month index added for filtered queries
-  goals: '++id, created_at',
-  loans: '++id, created_at',
-  investments: '++id, created_at',
-  reminders: '++id, created_at',
-  app_config: 'key',
+  expenses:       '++id, created_at, month',
+  goals:          '++id, created_at',
+  loans:          '++id, created_at',
+  investments:    '++id, created_at',
+  reminders:      '++id, created_at',
+  app_config:     'key',
 })
 
 db.version(3).stores({
   income_streams: '++id, created_at',
-  expenses: '++id, created_at, month',
-  goals: '++id, created_at',
-  loans: '++id, created_at',
-  investments: '++id, created_at',
-  reminders: '++id, created_at',
-  app_config: 'key',
-  loan_documents: '++id, loan_id, created_at', // loan_id is plaintext for lookup
-})
-
-// Version 4 — adds asset_class plaintext index on investments for filtering.
-// New fields (all encrypted): sector, price_history[].
-// asset_class stored plaintext (via extraPlain in encryptAndSave) — not sensitive.
-// Existing investment records are unaffected; they simply lack the index entry.
-db.version(4).stores({
-  income_streams: '++id, created_at',
-  expenses: '++id, created_at, month',
-  goals: '++id, created_at',
-  loans: '++id, created_at',
-  investments: '++id, created_at, asset_class', // asset_class plaintext for tab filtering
-  reminders: '++id, created_at',
-  app_config: 'key',
+  expenses:       '++id, created_at, month',
+  goals:          '++id, created_at',
+  loans:          '++id, created_at',
+  investments:    '++id, created_at',
+  reminders:      '++id, created_at',
+  app_config:     'key',
   loan_documents: '++id, loan_id, created_at',
 })
 
-// ─── Legacy blob helpers (used only for sentinel/config — not for user data) ──
+db.version(4).stores({
+  income_streams: '++id, created_at',
+  expenses:       '++id, created_at, month',
+  goals:          '++id, created_at',
+  loans:          '++id, created_at',
+  investments:    '++id, created_at, asset_class',
+  reminders:      '++id, created_at',
+  app_config:     'key',
+  loan_documents: '++id, loan_id, created_at',
+})
+
+// v5 — expense_logs: quick-log transactions stored separately from budget estimates.
+//   date     (plaintext) — yyyy-MM-dd, enables efficient date-range queries
+//   category (plaintext) — Finio category ID, enables per-category summaries
+//   All financial fields (amount, note, subcategory) are encrypted.
+db.version(5).stores({
+  income_streams: '++id, created_at',
+  expenses:       '++id, created_at, month',
+  goals:          '++id, created_at',
+  loans:          '++id, created_at',
+  investments:    '++id, created_at, asset_class',
+  reminders:      '++id, created_at',
+  app_config:     'key',
+  loan_documents: '++id, loan_id, created_at',
+  expense_logs:   '++id, date, category, logged_at',
+})
+
+// ─── Legacy blob helpers (used only for config/sentinel — not user data) ──────
 
 function getKey() {
   const key = useAppStore.getState().cryptoKey

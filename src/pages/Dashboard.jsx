@@ -20,6 +20,7 @@ import DashboardInsights from '../components/DashboardInsights.jsx'
 import ReportModal from '../components/ReportModal.jsx'
 import FrameworkDashboardWidget from '../components/framework/FrameworkDashboardWidget.jsx'
 import { useInvestments } from '../hooks/useInvestments.js'
+import { useTodayLogs, QUICK_CATEGORY_OPTIONS } from '../hooks/useQuickLog.js'
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
 
@@ -218,6 +219,60 @@ function DashboardGoalCard({ goal, surplusPaise }) {
           {pctComplete}% · {monthsRemaining > 0 ? `${monthsRemaining}mo remaining` : 'Overdue'}
         </p>
       </div>
+    </div>
+  )
+}
+
+// ─── Today's Quick Log widget ─────────────────────────────────────────────────
+
+function DashboardQuickLogWidget() {
+  const { logs, total, loading } = useTodayLogs()
+  const [expanded, setExpanded] = useState(false)
+
+  if (loading || logs.length === 0) return null
+
+  // Find display label for a stored category id
+  function catLabel(id) {
+    return QUICK_CATEGORY_OPTIONS.find((c) => c.id === id)?.label || id
+  }
+
+  return (
+    <div
+      className="rounded-2xl overflow-hidden"
+      style={{ background: '#1C1B29', border: '1px solid rgba(255,255,255,0.08)' }}
+    >
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-white/3 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-base">📝</span>
+          <p className="text-sm font-semibold text-white">Today's Logs</p>
+          <span className="text-[10px] text-white/30 bg-white/5 px-2 py-0.5 rounded-full">
+            {logs.length} transaction{logs.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+        <span className="text-sm font-bold font-numeric text-indigo-300">
+          {formatINRCompact(total)} logged
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="px-5 pb-4 space-y-1.5">
+          {logs.map((log, i) => (
+            <div key={i} className="flex items-center justify-between py-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+              <div className="flex items-center gap-2">
+                <span className="text-sm">{QUICK_CATEGORY_OPTIONS.find((c) => c.id === log.category)?.emoji || '📦'}</span>
+                <div>
+                  <span className="text-xs text-white/60">{catLabel(log.category)}</span>
+                  {log.note && <span className="text-[10px] text-white/30 ml-2">{log.note}</span>}
+                </div>
+              </div>
+              <span className="text-xs font-numeric text-white/60">{formatINRCompact(Number(log.amount) || 0)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -571,6 +626,9 @@ export default function Dashboard() {
       )}
 
       {/* ── Report Modal ────────────────────────────────────────────────── */}
+      {/* ── Today's Quick Logs widget ────────────────────────────────────── */}
+      <DashboardQuickLogWidget />
+
       {/* ── Framework widget (only if user has selected one) ─────────────── */}
       {!loading && summary?.totalMonthlyIncomePaise > 0 && (
         <FrameworkDashboardWidget

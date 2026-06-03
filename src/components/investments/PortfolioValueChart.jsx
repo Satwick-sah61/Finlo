@@ -122,7 +122,7 @@ function priceAtDate(history, atDate) {
 
 // ─── Chart data builder ───────────────────────────────────────────────────────
 
-function buildChartData(investments) {
+export function buildChartData(investments) {
   if (!investments.length) return []
 
   const buyDates = investments.map(getBuyDate).filter(Boolean)

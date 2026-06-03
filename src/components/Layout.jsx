@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Sidebar from './Sidebar.jsx'
 import TopBar from './TopBar.jsx'
+import QuickLogFAB from './quicklog/QuickLogFAB.jsx'
 
 export default function Layout({ children }) {
   const [collapsed, setCollapsed]   = useState(false)
@@ -48,6 +49,9 @@ export default function Layout({ children }) {
           {children}
         </main>
       </div>
+
+      {/* ── Quick Log FAB (visible on all authenticated pages) ─────────── */}
+      <QuickLogFAB />
 
     </div>
   )

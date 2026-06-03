@@ -1,14 +1,110 @@
-import { useState } from 'react'
+/**
+ * Onboarding — 5-step goal-first flow.
+ *
+ * Step 1: Welcome + privacy promise (unchanged)
+ * Step 2: Goal selection → pre-applies framework to app_config
+ * Step 3: Income entry (unchanged)
+ * Step 4: Expense entry (upgraded — framework targets + daily/monthly toggle)
+ * Step 5: Review + deviation analysis (upgraded — framework score + suggestions)
+ */
+
+import { useState, useMemo } from 'react'
 import { format } from 'date-fns'
 import {
   Shield, Cpu, Server, Plus, Trash2, ChevronRight, ChevronLeft,
-  CheckCircle2, TrendingUp, ArrowRight, Sparkles,
+  CheckCircle2, TrendingUp, ArrowRight, Sparkles, Check,
 } from 'lucide-react'
 import { useAppStore } from '../store/appStore.js'
 import { configSet } from '../db/schema.js'
 import { encryptAndSave } from '../db/helpers.js'
 import { INCOME_TYPES, FREQUENCY_OPTIONS, EXPENSE_CATEGORIES } from '../utils/finance.js'
 import { formatINR, fromRupees } from '../utils/currency.js'
+import { FRAMEWORK_PRESETS } from '../utils/frameworkMapping.js'
+import { analyzeFramework } from '../utils/frameworkAnalysis.js'
+import DailyMonthlyToggle from './shared/DailyMonthlyToggle.jsx'
+
+// ─── Categories that get a daily/monthly toggle ───────────────────────────────
+
+const TOGGLE_CATEGORIES = new Set(['food', 'transport', 'lifestyle', 'miscellaneous'])
+
+// ─── Goal → framework mapping ────────────────────────────────────────────────
+
+const ONBOARDING_GOALS = [
+  {
+    id:          'clear_debt',
+    emoji:       '🏠',
+    title:       'Clear My Debt Faster',
+    description: 'Focus on paying off loans and becoming debt-free',
+    frameworkId: 'finio_smart',
+  },
+  {
+    id:          'safety_net',
+    emoji:       '💰',
+    title:       'Build My Safety Net',
+    description: 'Create an emergency fund and build stable savings',
+    frameworkId: '60_20_20',
+  },
+  {
+    id:          'grow_wealth',
+    emoji:       '📈',
+    title:       'Grow My Wealth',
+    description: 'Invest consistently for long-term financial growth',
+    frameworkId: '75_15_10',
+  },
+  {
+    id:          'save_big',
+    emoji:       '✈️',
+    title:       'Save for Something Big',
+    description: 'A trip, house, wedding, or major purchase',
+    frameworkId: '50_30_20',
+  },
+  {
+    id:          'balance',
+    emoji:       '⚖️',
+    title:       'Balance Lifestyle & Savings',
+    description: 'Enjoy life while building financial stability',
+    frameworkId: '50_30_20',
+  },
+  {
+    id:          'custom',
+    emoji:       '🎯',
+    title:       "I'll Define My Own",
+    description: 'Set your own allocation targets',
+    frameworkId: null,
+  },
+]
+
+function findFramework(id) {
+  return FRAMEWORK_PRESETS.find((f) => f.id === id) || null
+}
+
+// ─── Compute per-category framework target ────────────────────────────────────
+
+function computeCategoryTargets(framework, monthlyIncomePaise) {
+  if (!framework || !monthlyIncomePaise) return {}
+
+  const targets = {}
+  const map = framework.categoryMap || {}
+
+  // Count categories per bucket
+  const bucketCategories = {}
+  for (const [cat, bucket] of Object.entries(map)) {
+    if (!bucketCategories[bucket]) bucketCategories[bucket] = []
+    bucketCategories[bucket].push(cat)
+  }
+
+  for (const bucket of (framework.buckets || [])) {
+    const cats = bucketCategories[bucket.id] || []
+    if (cats.length === 0) continue
+    const bucketPaise = Math.round(monthlyIncomePaise * bucket.targetPct / 100)
+    const perCat = Math.round(bucketPaise / cats.length)
+    for (const cat of cats) {
+      targets[cat] = perCat
+    }
+  }
+
+  return targets
+}
 
 // ─── Step 1: Welcome ──────────────────────────────────────────────────────────
 
@@ -29,41 +125,21 @@ function StepWelcome({ onNext }) {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-left max-w-2xl mx-auto">
-        <div className="glass rounded-2xl p-5 space-y-3">
-          <div className="w-10 h-10 rounded-xl bg-indigo-500/15 flex items-center justify-center">
-            <Shield className="w-5 h-5 text-indigo-400" />
+        {[
+          { Icon: Shield, color: 'indigo', title: 'AES-256 Encrypted', desc: 'Every byte of your data is encrypted with your passphrase before touching storage.' },
+          { Icon: Server, color: 'violet', title: 'Zero Data Sharing',  desc: "Nothing leaves your device. We never see, store, or touch your financial data." },
+          { Icon: Cpu,    color: 'cyan',   title: 'AI That Forgets',    desc: 'The AI advisor works only on anonymized summaries and retains nothing between sessions.' },
+        ].map(({ Icon, color, title, desc }) => (
+          <div key={title} className="glass rounded-2xl p-5 space-y-3">
+            <div className={`w-10 h-10 rounded-xl bg-${color}-500/15 flex items-center justify-center`}>
+              <Icon className={`w-5 h-5 text-${color}-400`} />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-white">{title}</p>
+              <p className="text-xs text-white/40 mt-1 leading-relaxed">{desc}</p>
+            </div>
           </div>
-          <div>
-            <p className="text-sm font-semibold text-white">AES-256 Encrypted</p>
-            <p className="text-xs text-white/40 mt-1 leading-relaxed">
-              Every byte of your data is encrypted with your passphrase before touching storage.
-            </p>
-          </div>
-        </div>
-
-        <div className="glass rounded-2xl p-5 space-y-3">
-          <div className="w-10 h-10 rounded-xl bg-violet-500/15 flex items-center justify-center">
-            <Server className="w-5 h-5 text-violet-400" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-white">Zero Data Sharing</p>
-            <p className="text-xs text-white/40 mt-1 leading-relaxed">
-              Nothing leaves your device. We never see, store, or touch your financial data.
-            </p>
-          </div>
-        </div>
-
-        <div className="glass rounded-2xl p-5 space-y-3">
-          <div className="w-10 h-10 rounded-xl bg-cyan-500/15 flex items-center justify-center">
-            <Cpu className="w-5 h-5 text-cyan-400" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-white">AI That Forgets</p>
-            <p className="text-xs text-white/40 mt-1 leading-relaxed">
-              The AI advisor works only on anonymized summaries and retains nothing between sessions.
-            </p>
-          </div>
-        </div>
+        ))}
       </div>
 
       <button
@@ -78,23 +154,69 @@ function StepWelcome({ onNext }) {
   )
 }
 
-// ─── Step 2: Income ───────────────────────────────────────────────────────────
+// ─── Step 2: Goal selection ───────────────────────────────────────────────────
+
+function StepGoal({ selectedGoal, setSelectedGoal, onNext, onBack }) {
+  return (
+    <div className="space-y-6 max-w-2xl mx-auto w-full">
+      <div className="text-center">
+        <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-violet-500/10 border border-violet-500/15 mb-4">
+          <span className="text-2xl">🎯</span>
+        </div>
+        <h2 className="text-2xl font-bold text-white mb-2">What's your financial goal right now?</h2>
+        <p className="text-white/40 text-sm">We'll personalise your budget framework to match.</p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {ONBOARDING_GOALS.map((goal) => {
+          const isSelected = selectedGoal?.id === goal.id
+          return (
+            <button
+              key={goal.id}
+              type="button"
+              onClick={() => setSelectedGoal(goal)}
+              className="relative text-left rounded-2xl p-4 transition-all duration-200 hover:-translate-y-0.5"
+              style={{
+                background: isSelected ? 'rgba(99,102,241,0.12)' : 'rgba(255,255,255,0.03)',
+                border:     isSelected ? '1px solid rgba(99,102,241,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                minHeight:  80,
+              }}
+            >
+              {isSelected && (
+                <div
+                  className="absolute top-3 right-3 w-5 h-5 rounded-full flex items-center justify-center"
+                  style={{ background: '#6366F1' }}
+                >
+                  <Check className="w-3 h-3 text-white" />
+                </div>
+              )}
+              <div className="flex items-start gap-3">
+                <span className="text-2xl flex-shrink-0">{goal.emoji}</span>
+                <div>
+                  <p className="text-sm font-semibold text-white">{goal.title}</p>
+                  <p className="text-xs text-white/40 mt-0.5 leading-snug">{goal.description}</p>
+                  {goal.frameworkId && (
+                    <p className="text-[10px] text-indigo-400/60 mt-1">
+                      → {findFramework(goal.frameworkId)?.name || 'Custom'}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+
+      <StepNav onBack={onBack} onNext={onNext} canNext={!!selectedGoal} nextLabel="Set Up Income →" />
+    </div>
+  )
+}
+
+// ─── Step 3: Income ───────────────────────────────────────────────────────────
 
 const EMPTY_INCOME = () => ({ name: '', type: 'salary', amount: '', frequency: 'monthly' })
 
 function StepIncome({ income, setIncome, onNext, onBack }) {
-  function addRow() {
-    setIncome((prev) => [...prev, EMPTY_INCOME()])
-  }
-
-  function removeRow(i) {
-    setIncome((prev) => prev.filter((_, idx) => idx !== i))
-  }
-
-  function updateRow(i, field, value) {
-    setIncome((prev) => prev.map((row, idx) => (idx === i ? { ...row, [field]: value } : row)))
-  }
-
   const hasValid = income.some((r) => r.name.trim() && Number(r.amount) > 0)
 
   return (
@@ -109,12 +231,15 @@ function StepIncome({ income, setIncome, onNext, onBack }) {
 
       <div className="space-y-3">
         {income.map((row, i) => (
-          <IncomeRow key={i} row={row} index={i} onChange={updateRow} onRemove={removeRow} canRemove={income.length > 1} />
+          <IncomeRow key={i} row={row} index={i}
+            onChange={(idx, field, val) => setIncome((prev) => prev.map((r, j) => j === idx ? { ...r, [field]: val } : r))}
+            onRemove={(idx) => setIncome((prev) => prev.filter((_, j) => j !== idx))}
+            canRemove={income.length > 1}
+          />
         ))}
-
         <button
           type="button"
-          onClick={addRow}
+          onClick={() => setIncome((p) => [...p, EMPTY_INCOME()])}
           className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-dashed border-white/15 text-white/40 hover:text-white/70 hover:border-white/30 transition-all text-sm"
         >
           <Plus className="w-4 h-4" />
@@ -122,12 +247,7 @@ function StepIncome({ income, setIncome, onNext, onBack }) {
         </button>
       </div>
 
-      <StepNav
-        onBack={onBack}
-        onNext={onNext}
-        canNext={true}
-        nextLabel={hasValid ? 'Continue' : 'Skip for now'}
-      />
+      <StepNav onBack={onBack} onNext={onNext} canNext={true} nextLabel={hasValid ? 'Continue' : 'Skip for now'} />
     </div>
   )
 }
@@ -136,51 +256,38 @@ function IncomeRow({ row, index, onChange, onRemove, canRemove }) {
   return (
     <div className="glass rounded-xl p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-xs text-white/30 font-medium uppercase tracking-wider">
-          Income source {index + 1}
-        </span>
+        <span className="text-xs text-white/30 font-medium uppercase tracking-wider">Income source {index + 1}</span>
         {canRemove && (
-          <button
-            type="button"
-            onClick={() => onRemove(index)}
-            className="text-white/20 hover:text-red-400 transition-colors"
-          >
+          <button type="button" onClick={() => onRemove(index)} className="text-white/20 hover:text-red-400 transition-colors">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         )}
       </div>
-
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
           <input
             type="text"
             value={row.name}
             onChange={(e) => onChange(index, 'name', e.target.value)}
-            placeholder="e.g. Google Salary, Freelance, Rent from flat"
+            placeholder="e.g. Salary, Freelance, Rent"
             className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white placeholder-white/25 focus:outline-none focus:border-indigo-500/50 transition-all"
+            style={{ color: '#ffffff', caretColor: '#ffffff' }}
           />
         </div>
-
         <select
           value={row.type}
           onChange={(e) => onChange(index, 'type', e.target.value)}
           className="bg-[#1C1B29] border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all appearance-none cursor-pointer"
         >
-          {INCOME_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>{t.label}</option>
-          ))}
+          {INCOME_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
-
         <select
           value={row.frequency}
           onChange={(e) => onChange(index, 'frequency', e.target.value)}
           className="bg-[#1C1B29] border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all appearance-none cursor-pointer"
         >
-          {FREQUENCY_OPTIONS.map((f) => (
-            <option key={f.value} value={f.value}>{f.label}</option>
-          ))}
+          {FREQUENCY_OPTIONS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
         </select>
-
         <div className="col-span-2 relative">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30 text-sm font-medium">₹</span>
           <input
@@ -190,6 +297,7 @@ function IncomeRow({ row, index, onChange, onRemove, canRemove }) {
             placeholder="0"
             min="0"
             className="w-full bg-white/5 border border-white/10 rounded-lg pl-7 pr-3 py-2.5 text-sm text-white placeholder-white/25 focus:outline-none focus:border-indigo-500/50 transition-all font-numeric"
+            style={{ color: '#ffffff', caretColor: '#ffffff' }}
           />
         </div>
       </div>
@@ -197,11 +305,16 @@ function IncomeRow({ row, index, onChange, onRemove, canRemove }) {
   )
 }
 
-// ─── Step 3: Expenses ─────────────────────────────────────────────────────────
+// ─── Step 4: Expenses (with framework targets + daily/monthly toggle) ─────────
 
-function StepExpenses({ expenses, setExpenses, onNext, onBack }) {
-  function updateAmount(id, value) {
-    setExpenses((prev) => ({ ...prev, [id]: value }))
+function StepExpenses({ expenses, setExpenses, onNext, onBack, framework, monthlyIncomePaise }) {
+  const targets = useMemo(
+    () => computeCategoryTargets(framework, monthlyIncomePaise),
+    [framework, monthlyIncomePaise]
+  )
+
+  function updateAmount(id, paise) {
+    setExpenses((prev) => ({ ...prev, [id]: paise > 0 ? paise : 0 }))
   }
 
   return (
@@ -211,31 +324,27 @@ function StepExpenses({ expenses, setExpenses, onNext, onBack }) {
           <span className="text-2xl">🧾</span>
         </div>
         <h2 className="text-2xl font-bold text-white mb-2">Map your monthly spending</h2>
-        <p className="text-white/40 text-sm">
-          Rough estimates are fine — enter 0 for categories that don't apply to you.
-        </p>
+        {framework && (
+          <p className="text-xs text-indigo-400/70 mt-1">
+            Targets shown based on <strong>{framework.name}</strong>
+            {monthlyIncomePaise > 0 ? ` at ${formatINR(fromRupees(monthlyIncomePaise / 100))} income` : ''}
+          </p>
+        )}
+        <p className="text-white/40 text-sm mt-1">Rough estimates are fine — enter 0 to skip categories.</p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="space-y-2">
         {EXPENSE_CATEGORIES.map((cat) => (
-          <div key={cat.id} className="glass rounded-xl p-4 flex items-center gap-3">
-            <span className="text-2xl flex-shrink-0">{cat.emoji}</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-white truncate">{cat.label}</p>
-              <p className="text-xs text-white/30 truncate">{cat.hint}</p>
-            </div>
-            <div className="flex-shrink-0 relative">
-              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-white/30 text-xs">₹</span>
-              <input
-                type="number"
-                value={expenses[cat.id] ?? ''}
-                onChange={(e) => updateAmount(cat.id, e.target.value)}
-                placeholder="0"
-                min="0"
-                className="w-24 bg-white/5 border border-white/10 rounded-lg pl-5 pr-2 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-indigo-500/50 transition-all font-numeric text-right"
-              />
-            </div>
-          </div>
+          <DailyMonthlyToggle
+            key={cat.id}
+            valuePaise={expenses[cat.id] || 0}
+            onChange={(paise) => updateAmount(cat.id, paise)}
+            label={cat.label}
+            emoji={cat.emoji}
+            hint={cat.hint}
+            frameworkTarget={targets[cat.id] || 0}
+            hasToggle={TOGGLE_CATEGORIES.has(cat.id)}
+          />
         ))}
       </div>
 
@@ -244,30 +353,36 @@ function StepExpenses({ expenses, setExpenses, onNext, onBack }) {
   )
 }
 
-// ─── Step 4: Review ───────────────────────────────────────────────────────────
+// ─── Step 5: Review + deviation ───────────────────────────────────────────────
 
-function StepReview({ income, expenses, onComplete, onBack, completing }) {
+function StepReview({ income, expenses, framework, selectedGoal, onComplete, onBack, completing }) {
   const monthlyIncomePaise = income.reduce((sum, r) => {
     if (!r.amount || Number(r.amount) <= 0) return sum
-    const amountPaise = Math.round(Number(r.amount) * 100)
-    const opt = FREQUENCY_OPTIONS.find((f) => f.value === r.frequency)
-    const monthly = opt ? Math.round((amountPaise * opt.perYear) / 12) : amountPaise
-    return sum + monthly
+    const paise = Math.round(Number(r.amount) * 100)
+    const opt   = FREQUENCY_OPTIONS.find((f) => f.value === r.frequency)
+    return sum + (opt ? Math.round((paise * opt.perYear) / 12) : paise)
   }, 0)
 
-  const monthlyExpensePaise = Object.values(expenses).reduce((sum, v) => {
-    const n = Number(v)
-    return sum + (n > 0 ? Math.round(n * 100) : 0)
-  }, 0)
+  const expensesAsArray = EXPENSE_CATEGORIES
+    .filter((cat) => (expenses[cat.id] || 0) > 0)
+    .map((cat) => ({ category: cat.id, amount: expenses[cat.id] / 100 })) // amount in rupees for analysis
 
-  const surplusPaise = monthlyIncomePaise - monthlyExpensePaise
-  const savingsRate =
-    monthlyIncomePaise > 0 ? Math.round((surplusPaise / monthlyIncomePaise) * 100) : 0
+  const monthlyExpensePaise = Object.values(expenses).reduce((s, v) => s + (Number(v) || 0), 0)
+  const surplusPaise        = monthlyIncomePaise - monthlyExpensePaise
+  const savingsRate         = monthlyIncomePaise > 0 ? Math.round((surplusPaise / monthlyIncomePaise) * 100) : 0
 
-  const filledExpenses = EXPENSE_CATEGORIES.filter(
-    (c) => Number(expenses[c.id]) > 0
-  )
-  const filledIncome = income.filter((r) => r.name.trim() && Number(r.amount) > 0)
+  // Run framework analysis
+  const analysis = useMemo(() => {
+    if (!framework || !monthlyIncomePaise) return null
+    return analyzeFramework(framework, monthlyIncomePaise, expensesAsArray, 0, 0)
+  }, [framework, monthlyIncomePaise, expensesAsArray])
+
+  const scoreColor = analysis
+    ? (analysis.score >= 75 ? '#10B981' : analysis.score >= 50 ? '#F59E0B' : '#EF4444')
+    : '#6366F1'
+
+  const filledExpenses = EXPENSE_CATEGORIES.filter((c) => (expenses[c.id] || 0) > 0)
+  const filledIncome   = income.filter((r) => r.name.trim() && Number(r.amount) > 0)
 
   return (
     <div className="space-y-6 max-w-2xl mx-auto w-full">
@@ -275,48 +390,76 @@ function StepReview({ income, expenses, onComplete, onBack, completing }) {
         <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/15 mb-4">
           <CheckCircle2 className="w-6 h-6 text-indigo-400" />
         </div>
-        <h2 className="text-2xl font-bold text-white mb-2">Here's your financial picture</h2>
-        <p className="text-white/40 text-sm">
-          This data will be saved encrypted to your vault.
-        </p>
+        <h2 className="text-2xl font-bold text-white mb-1">Here's your financial picture</h2>
+        {selectedGoal && (
+          <p className="text-sm text-white/40">
+            Goal: <span className="text-indigo-300">{selectedGoal.emoji} {selectedGoal.title}</span>
+            {framework && <span className="text-white/30"> · {framework.name}</span>}
+          </p>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="glass rounded-2xl p-5 text-center">
-          <p className="text-xs text-white/40 uppercase tracking-wider mb-2">Monthly Income</p>
-          <p className="text-2xl font-bold font-numeric text-green-400">
-            {formatINR(fromRupees(monthlyIncomePaise / 100))}
-          </p>
-          <p className="text-xs text-white/30 mt-1">{filledIncome.length} source{filledIncome.length !== 1 ? 's' : ''}</p>
-        </div>
-
-        <div className="glass rounded-2xl p-5 text-center">
-          <p className="text-xs text-white/40 uppercase tracking-wider mb-2">Monthly Expenses</p>
-          <p className="text-2xl font-bold font-numeric text-red-400">
-            {formatINR(fromRupees(monthlyExpensePaise / 100))}
-          </p>
-          <p className="text-xs text-white/30 mt-1">{filledExpenses.length} categor{filledExpenses.length !== 1 ? 'ies' : 'y'}</p>
-        </div>
-
-        <div className={`glass rounded-2xl p-5 text-center ${surplusPaise >= 0 ? 'border-green-500/20' : 'border-red-500/20'}`}>
-          <p className="text-xs text-white/40 uppercase tracking-wider mb-2">
-            {surplusPaise >= 0 ? 'Monthly Surplus' : 'Monthly Deficit'}
-          </p>
-          <p className={`text-2xl font-bold font-numeric ${surplusPaise >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {formatINR(fromRupees(Math.abs(surplusPaise) / 100))}
-          </p>
-          <p className="text-xs text-white/30 mt-1">
-            {monthlyIncomePaise > 0 ? `${Math.abs(savingsRate)}% savings rate` : '—'}
-          </p>
-        </div>
+      {/* Summary stats */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: 'Monthly Income',   value: formatINR(fromRupees(monthlyIncomePaise / 100)), color: 'text-green-400', sub: `${filledIncome.length} source${filledIncome.length !== 1 ? 's' : ''}` },
+          { label: 'Monthly Expenses', value: formatINR(fromRupees(monthlyExpensePaise / 100)), color: 'text-orange-400', sub: `${filledExpenses.length} categor${filledExpenses.length !== 1 ? 'ies' : 'y'}` },
+          { label: surplusPaise >= 0 ? 'Monthly Surplus' : 'Deficit', value: formatINR(fromRupees(Math.abs(surplusPaise) / 100)), color: surplusPaise >= 0 ? 'text-green-400' : 'text-red-400', sub: `${Math.abs(savingsRate)}% savings rate` },
+        ].map(({ label, value, color, sub }) => (
+          <div key={label} className="glass rounded-2xl p-4 text-center">
+            <p className="text-[10px] text-white/40 uppercase tracking-wider mb-2">{label}</p>
+            <p className={`text-xl font-bold font-numeric ${color}`}>{value}</p>
+            <p className="text-[10px] text-white/30 mt-0.5">{sub}</p>
+          </div>
+        ))}
       </div>
 
-      {filledIncome.length === 0 && monthlyExpensePaise === 0 && (
-        <div className="bg-amber-500/8 border border-amber-500/15 rounded-xl px-5 py-4 text-amber-400/80 text-sm text-center">
-          You skipped income and expenses — no problem. You can add them from the app anytime.
+      {/* Framework deviation analysis */}
+      {analysis && framework && (
+        <div className="glass rounded-2xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-white">Framework Alignment</p>
+            <div className="flex items-center gap-2">
+              <span className="text-2xl font-bold font-numeric" style={{ color: scoreColor }}>{analysis.score}</span>
+              <span className="text-sm text-white/30">/100</span>
+            </div>
+          </div>
+
+          {/* Bucket comparison bars */}
+          <div className="space-y-3">
+            {analysis.buckets.map((b) => {
+              const statusColor = b.status === 'good' ? '#10B981' : b.status === 'warning' ? '#F59E0B' : '#EF4444'
+              return (
+                <div key={b.id}>
+                  <div className="flex items-center justify-between text-[10px] mb-1">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full" style={{ background: b.color }} />
+                      <span className="text-white/50">{b.label}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-white/30">target {b.targetPct}%</span>
+                      <span style={{ color: statusColor }}>actual {b.actualPct}%</span>
+                    </div>
+                  </div>
+                  <div className="relative h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                    <div style={{ width: `${b.targetPct}%`, background: `${b.color}40`, height: '100%', position: 'absolute', left: 0 }} />
+                    <div style={{ width: `${Math.min(100, b.actualPct)}%`, background: b.color, height: '100%', position: 'absolute', left: 0, opacity: 0.85 }} />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Top suggestion */}
+          {analysis.suggestions.length > 0 && (
+            <p className="text-xs text-white/45 leading-relaxed pl-2" style={{ borderLeft: '2px solid rgba(99,102,241,0.4)' }}>
+              💡 {analysis.suggestions[0]}
+            </p>
+          )}
         </div>
       )}
 
+      {/* Action buttons */}
       <div className="flex gap-3">
         <button
           type="button"
@@ -324,7 +467,7 @@ function StepReview({ income, expenses, onComplete, onBack, completing }) {
           className="flex items-center gap-2 px-5 py-3 rounded-xl text-white/40 hover:text-white/70 hover:bg-white/5 transition-all text-sm"
         >
           <ChevronLeft className="w-4 h-4" />
-          Back
+          Adjust Expenses
         </button>
         <button
           type="button"
@@ -333,15 +476,9 @@ function StepReview({ income, expenses, onComplete, onBack, completing }) {
           className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white font-semibold transition-all glow-indigo disabled:opacity-50"
         >
           {completing ? (
-            <>
-              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              Saving…
-            </>
+            <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Saving…</>
           ) : (
-            <>
-              Enter Finio
-              <ArrowRight className="w-4 h-4" />
-            </>
+            <>Enter Finio <ArrowRight className="w-4 h-4" /></>
           )}
         </button>
       </div>
@@ -384,32 +521,46 @@ function ProgressDots({ step, total }) {
         <div
           key={i}
           className={`rounded-full transition-all duration-300 ${
-            i < step
-              ? 'w-6 h-1.5 bg-indigo-500'
-              : i === step
-              ? 'w-4 h-1.5 bg-indigo-400'
-              : 'w-2 h-1.5 bg-white/15'
+            i < step  ? 'w-6 h-1.5 bg-indigo-500'
+            : i === step ? 'w-4 h-1.5 bg-indigo-400'
+            : 'w-2 h-1.5 bg-white/15'
           }`}
         />
       ))}
-      <span className="text-xs text-white/30 ml-1">
-        Step {step + 1} of {total}
-      </span>
+      <span className="text-xs text-white/30 ml-1">Step {step + 1} of {total}</span>
     </div>
   )
 }
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
-const TOTAL_STEPS = 4
+const TOTAL_STEPS = 5
 
 export default function Onboarding() {
   const { completeOnboarding } = useAppStore()
-  const [step, setStep] = useState(0)
+  const [step,       setStep]       = useState(0)
   const [completing, setCompleting] = useState(false)
 
-  const [income, setIncome] = useState([EMPTY_INCOME()])
-  const [expenses, setExpenses] = useState({})
+  // Per-step state
+  const [selectedGoal, setSelectedGoal] = useState(null)
+  const [income,       setIncome]       = useState([EMPTY_INCOME()])
+  const [expenses,     setExpenses]     = useState({})
+
+  // Derived framework from selected goal
+  const framework = selectedGoal
+    ? findFramework(selectedGoal.frameworkId) || null
+    : null
+
+  // Monthly income computed for framework target display
+  const monthlyIncomePaise = useMemo(() =>
+    income.reduce((sum, r) => {
+      if (!r.amount || Number(r.amount) <= 0) return sum
+      const paise = Math.round(Number(r.amount) * 100)
+      const opt   = FREQUENCY_OPTIONS.find((f) => f.value === r.frequency)
+      return sum + (opt ? Math.round((paise * opt.perYear) / 12) : paise)
+    }, 0),
+    [income]
+  )
 
   const next = () => setStep((s) => Math.min(s + 1, TOTAL_STEPS - 1))
   const back = () => setStep((s) => Math.max(s - 1, 0))
@@ -418,44 +569,46 @@ export default function Onboarding() {
     setCompleting(true)
     try {
       const cryptoKey = useAppStore.getState().cryptoKey
-      const month = format(new Date(), 'yyyy-MM')
-      const today = format(new Date(), 'yyyy-MM-dd')
+      const month     = format(new Date(), 'yyyy-MM')
+      const today     = format(new Date(), 'yyyy-MM-dd')
+      const now       = new Date()
+
+      // Persist framework + goal to app_config
+      const saveConfigs = [
+        configSet('onboarding_complete', 'true'),
+        configSet('first_launch', Date.now().toString()),
+        selectedGoal?.id && configSet('onboarding_goal', selectedGoal.id),
+        framework      && configSet('budget_framework', JSON.stringify(framework)),
+      ].filter(Boolean)
 
       await Promise.all([
+        ...saveConfigs,
+        // Income streams
         ...income
           .filter((r) => r.name.trim() && Number(r.amount) > 0)
           .map((r) =>
-            encryptAndSave(
-              'income_streams',
-              {
-                name: r.name.trim(),
-                type: r.type,
-                amount: Math.round(Number(r.amount) * 100),
-                frequency: r.frequency,
-              },
-              cryptoKey,
-            )
+            encryptAndSave('income_streams', {
+              name:      r.name.trim(),
+              type:      r.type,
+              amount:    Math.round(Number(r.amount) * 100),
+              frequency: r.frequency,
+            }, cryptoKey)
           ),
+        // Expenses (amounts already in paise from DailyMonthlyToggle)
         ...EXPENSE_CATEGORIES
-          .filter((cat) => Number(expenses[cat.id]) > 0)
+          .filter((cat) => (expenses[cat.id] || 0) > 0)
           .map((cat) =>
-            encryptAndSave(
-              'expenses',
-              {
-                category: cat.id,
-                subcategory: cat.label,
-                amount: Math.round(Number(expenses[cat.id]) * 100),
-                date: today,
-                month,
-                notes: '',
-              },
-              cryptoKey,
-              ['month'],
-            )
+            encryptAndSave('expenses', {
+              category:    cat.id,
+              subcategory: cat.label,
+              amount:      expenses[cat.id], // already in paise
+              date:        today,
+              month,
+              notes:       '',
+            }, cryptoKey, ['month'])
           ),
       ])
 
-      await configSet('onboarding_complete', 'true')
       completeOnboarding()
     } catch (err) {
       console.error('[finio] Onboarding completion failed:', err)
@@ -464,7 +617,7 @@ export default function Onboarding() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0F0E17] flex flex-col items-center justify-start p-4 pt-8">
+    <div className="min-h-screen bg-[#0F0E17] flex flex-col items-center justify-start p-4 pt-8 pb-16">
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-indigo-600/8 rounded-full blur-3xl" />
       </div>
@@ -484,12 +637,24 @@ export default function Onboarding() {
 
         <div className="w-full">
           {step === 0 && <StepWelcome onNext={next} />}
-          {step === 1 && <StepIncome income={income} setIncome={setIncome} onNext={next} onBack={back} />}
-          {step === 2 && <StepExpenses expenses={expenses} setExpenses={setExpenses} onNext={next} onBack={back} />}
+          {step === 1 && <StepGoal selectedGoal={selectedGoal} setSelectedGoal={setSelectedGoal} onNext={next} onBack={back} />}
+          {step === 2 && <StepIncome income={income} setIncome={setIncome} onNext={next} onBack={back} />}
           {step === 3 && (
+            <StepExpenses
+              expenses={expenses}
+              setExpenses={setExpenses}
+              onNext={next}
+              onBack={back}
+              framework={framework}
+              monthlyIncomePaise={monthlyIncomePaise}
+            />
+          )}
+          {step === 4 && (
             <StepReview
               income={income}
               expenses={expenses}
+              framework={framework}
+              selectedGoal={selectedGoal}
               onBack={back}
               onComplete={handleComplete}
               completing={completing}

@@ -93,10 +93,16 @@ export async function decryptAndLoad(table, id, cryptoKey) {
 }
 
 // Read and decrypt all records in a table.
-// filter.month: if provided, uses the Dexie 'month' index for efficient filtering
+// filter.month:      uses the Dexie 'month' index for efficient month filtering
+// filter.date:       uses the Dexie 'date' index for single-day queries
+// filter.dateRange:  [start, end] inclusive, uses 'date' index range query
 export async function decryptAndLoadAll(table, cryptoKey, filter = {}) {
   let rows
-  if (filter.month) {
+  if (filter.date) {
+    rows = await db[table].where('date').equals(filter.date).toArray()
+  } else if (filter.dateRange) {
+    rows = await db[table].where('date').between(filter.dateRange[0], filter.dateRange[1], true, true).toArray()
+  } else if (filter.month) {
     rows = await db[table].where('month').equals(filter.month).toArray()
   } else {
     rows = await db[table].toArray()

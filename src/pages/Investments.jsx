@@ -30,6 +30,8 @@ import InvestmentDetail from '../components/investments/InvestmentDetail.jsx'
 import InvestmentNewsPanel from '../components/investments/InvestmentNewsPanel.jsx'
 import SIPTracker from '../components/investments/SIPTracker.jsx'
 import RebalancingPanel from '../components/investments/RebalancingPanel.jsx'
+import UpdateAllPricesModal from '../components/investments/UpdateAllPricesModal.jsx'
+import { buildChartData } from '../components/investments/PortfolioValueChart.jsx'
 
 // ─── Filter / sort config ─────────────────────────────────────────────────────
 
@@ -341,13 +343,14 @@ export default function Investments() {
     loading, error, refresh,
   } = useInvestments()
 
-  const [filter,     setFilter]     = useState('all')
-  const [sort,       setSort]       = useState('value')
-  const [showAdd,    setShowAdd]    = useState(false)
-  const [editInv,    setEditInv]    = useState(null)
-  const [updateInv,  setUpdateInv]  = useState(null)
-  const [showCharts, setShowCharts] = useState(true)
-  const [dismissed,  setDismissed]  = useState(new Set())
+  const [filter,        setFilter]        = useState('all')
+  const [sort,          setSort]          = useState('value')
+  const [showAdd,       setShowAdd]       = useState(false)
+  const [editInv,       setEditInv]       = useState(null)
+  const [updateInv,     setUpdateInv]     = useState(null)
+  const [showCharts,    setShowCharts]    = useState(true)
+  const [showUpdateAll, setShowUpdateAll] = useState(false)
+  const [dismissed,     setDismissed]     = useState(new Set())
 
   const allReminders = useMemo(
     () => (!loading && enrichedInvestments.length ? generateInvestmentReminders(enrichedInvestments) : []),
@@ -402,6 +405,14 @@ export default function Investments() {
         <div className="flex items-center gap-2">
           {hasData && (
             <>
+              <button
+                onClick={() => setShowUpdateAll(true)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium text-white/40 hover:text-white/70 hover:bg-white/6 transition-all"
+                title="Bulk update prices for stocks, MFs, gold"
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span className="hidden sm:inline">Update Prices</span>
+              </button>
               <button
                 onClick={() => exportPortfolio({ enrichedInvestments, totalInvested, currentValue, totalGainLoss, totalGainLossPct, assetAllocation })}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium text-white/40 hover:text-white/70 hover:bg-white/6 transition-all"
@@ -461,31 +472,62 @@ export default function Investments() {
 
       {/* ── Empty state ───────────────────────────────────────────────────── */}
       {!loading && !error && !hasData && (
-        <div
-          className="rounded-2xl p-12 flex flex-col items-center text-center gap-5"
-          style={{ background: '#1C1B29', border: '1px solid rgba(255,255,255,0.07)' }}
-        >
-          <div className="w-20 h-20 rounded-3xl flex items-center justify-center text-4xl" style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)' }}>
-            📈
+        <div className="space-y-4">
+          <div
+            className="rounded-2xl p-8 flex flex-col items-center text-center gap-4"
+            style={{ background: '#1C1B29', border: '1px solid rgba(255,255,255,0.07)' }}
+          >
+            <div className="w-16 h-16 rounded-3xl flex items-center justify-center text-3xl" style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)' }}>
+              📈
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-white">Build your investment portfolio</p>
+              <p className="text-sm text-white/35 mt-1 max-w-sm leading-relaxed">
+                Track stocks, mutual funds, FDs, PPF, gold, and real estate in one private place.
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="text-lg font-semibold text-white">No investments tracked yet</p>
-            <p className="text-sm text-white/40 mt-1.5 max-w-sm leading-relaxed">
-              Track your entire portfolio — stocks, mutual funds, FDs, PPF, gold, and real estate.
-            </p>
-          </div>
-          <div className="grid grid-cols-3 gap-2 w-full max-w-md">
-            {['📈 Stocks', '🔄 Mutual Funds', '🏦 Fixed Deposits', '🪙 Gold', '🏛️ PPF / NPS', '🏠 Real Estate'].map((a) => (
-              <div key={a} className="rounded-xl p-2.5 text-xs text-white/40" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>{a}</div>
+
+          {/* Three entry-point cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {[
+              {
+                icon: '✏️',
+                title: 'Add Manually',
+                desc: 'Enter any investment — stocks, MF, FD, gold, or real estate',
+                action: () => setShowAdd(true),
+                primary: true,
+              },
+              {
+                icon: '🤖',
+                title: 'Import via AI',
+                desc: 'Upload a statement and let AI extract your holdings',
+                action: () => setShowAdd(true), // Points to add modal; AI import is a sub-flow
+                primary: false,
+              },
+              {
+                icon: '🔄',
+                title: 'Start with SIP',
+                desc: 'Set up a systematic investment plan for mutual funds',
+                action: () => { setShowAdd(true) },
+                primary: false,
+              },
+            ].map(({ icon, title, desc, action, primary }) => (
+              <button
+                key={title}
+                onClick={action}
+                className="text-left rounded-2xl p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/30"
+                style={{
+                  background: primary ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.03)',
+                  border:     primary ? '1px solid rgba(99,102,241,0.3)' : '1px solid rgba(255,255,255,0.07)',
+                }}
+              >
+                <div className="text-2xl mb-3">{icon}</div>
+                <p className="text-sm font-semibold text-white">{title}</p>
+                <p className="text-xs text-white/35 mt-1 leading-relaxed">{desc}</p>
+              </button>
             ))}
           </div>
-          <button
-            onClick={() => setShowAdd(true)}
-            className="flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-95"
-            style={{ background: '#6366F1' }}
-          >
-            <Plus className="w-4 h-4" /> Add Your First Investment
-          </button>
         </div>
       )}
 
@@ -621,6 +663,13 @@ export default function Investments() {
       {showAdd && <AddInvestmentModal onClose={() => setShowAdd(false)} onSaved={() => { refresh(); setShowAdd(false) }} />}
       {editInv && <AddInvestmentModal editInvestment={editInv} onClose={() => setEditInv(null)} onSaved={() => { refresh(); setEditInv(null) }} />}
       {updateInv && <UpdatePriceModal investment={updateInv} onClose={() => setUpdateInv(null)} onSaved={() => { refresh(); setUpdateInv(null) }} />}
+      {showUpdateAll && (
+        <UpdateAllPricesModal
+          enrichedInvestments={enrichedInvestments}
+          onClose={() => setShowUpdateAll(false)}
+          onSaved={() => { refresh(); setShowUpdateAll(false) }}
+        />
+      )}
     </div>
   )
 }
