@@ -417,45 +417,104 @@ function StepReview({ income, expenses, framework, selectedGoal, onComplete, onB
       {/* Framework deviation analysis */}
       {analysis && framework && (
         <div className="glass rounded-2xl p-5 space-y-4">
+          {/* Score header */}
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-white">Framework Alignment</p>
-            <div className="flex items-center gap-2">
-              <span className="text-2xl font-bold font-numeric" style={{ color: scoreColor }}>{analysis.score}</span>
-              <span className="text-sm text-white/30">/100</span>
+            <div>
+              <p className="text-sm font-semibold text-white">Framework Alignment</p>
+              <p className="text-[10px] text-white/30 mt-0.5">Using: {framework.name}</p>
+            </div>
+            <div className="text-right">
+              <span className="text-4xl font-bold font-numeric" style={{ color: scoreColor }}>{analysis.score}</span>
+              <p className="text-[10px] text-white/30">/100</p>
             </div>
           </div>
 
-          {/* Bucket comparison bars */}
-          <div className="space-y-3">
-            {analysis.buckets.map((b) => {
-              const statusColor = b.status === 'good' ? '#10B981' : b.status === 'warning' ? '#F59E0B' : '#EF4444'
-              return (
-                <div key={b.id}>
-                  <div className="flex items-center justify-between text-[10px] mb-1">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full" style={{ background: b.color }} />
-                      <span className="text-white/50">{b.label}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-white/30">target {b.targetPct}%</span>
-                      <span style={{ color: statusColor }}>actual {b.actualPct}%</span>
-                    </div>
-                  </div>
-                  <div className="relative h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                    <div style={{ width: `${b.targetPct}%`, background: `${b.color}40`, height: '100%', position: 'absolute', left: 0 }} />
-                    <div style={{ width: `${Math.min(100, b.actualPct)}%`, background: b.color, height: '100%', position: 'absolute', left: 0, opacity: 0.85 }} />
-                  </div>
-                </div>
-              )
-            })}
+          {/* Deviation table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                  {['Bucket', 'Target', 'Actual', '', 'Variance'].map((h) => (
+                    <th key={h} className="py-2 text-left text-[10px] text-white/25 font-medium pr-3 last:pr-0">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {analysis.buckets.map((b) => {
+                  const trafficLight = b.status === 'good' ? '🟢' : b.status === 'warning' ? '🟡' : '🔴'
+                  const varSign = b.varPaise > 0 ? '+' : b.varPaise < 0 ? '−' : ''
+                  const varAmt  = b.varPaise !== 0
+                    ? `${varSign}₹${Math.round(Math.abs(b.varPaise) / 100).toLocaleString('en-IN')}`
+                    : '—'
+                  return (
+                    <tr key={b.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                      <td className="py-2 pr-3">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: b.color }} />
+                          <span className="text-white/60 font-medium">{b.label}</span>
+                        </div>
+                      </td>
+                      <td className="py-2 pr-3 text-white/40 font-numeric">
+                        ₹{Math.round((b.targetPaise || 0) / 100).toLocaleString('en-IN')}
+                      </td>
+                      <td className="py-2 pr-3 text-white/70 font-numeric">
+                        ₹{Math.round((b.actualPaise || 0) / 100).toLocaleString('en-IN')}
+                      </td>
+                      <td className="py-2 pr-3 text-base leading-none">{trafficLight}</td>
+                      <td className="py-2 font-numeric font-semibold"
+                        style={{ color: b.varPaise > 0 ? '#EF4444' : b.varPaise < 0 ? '#10B981' : 'rgba(255,255,255,0.3)' }}>
+                        {varAmt}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
 
-          {/* Top suggestion */}
-          {analysis.suggestions.length > 0 && (
-            <p className="text-xs text-white/45 leading-relaxed pl-2" style={{ borderLeft: '2px solid rgba(99,102,241,0.4)' }}>
-              💡 {analysis.suggestions[0]}
-            </p>
-          )}
+          {/* "Your biggest opportunity" insight */}
+          {(() => {
+            const biggest = [...analysis.buckets]
+              .filter((b) => b.varPaise > 0)
+              .sort((a, b) => b.varPaise - a.varPaise)[0]
+            if (!biggest) return null
+            const saving = Math.round(biggest.varPaise / 100).toLocaleString('en-IN')
+            return (
+              <div
+                className="rounded-xl px-4 py-3"
+                style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)' }}
+              >
+                <p className="text-xs text-white/60 leading-relaxed">
+                  <span className="text-indigo-300 font-semibold">Your biggest opportunity:</span>{' '}
+                  {biggest.label} is ₹{saving} over target — bringing it in line could boost your score significantly.
+                </p>
+              </div>
+            )
+          })()}
+
+          {/* Top 2 rule-based suggestions */}
+          {(() => {
+            const suggestions = analysis.buckets
+              .filter((b) => b.varPaise > 0)
+              .sort((a, b) => b.varPaise - a.varPaise)
+              .slice(0, 2)
+              .map((b) => {
+                const amt = Math.round(b.varPaise / 100).toLocaleString('en-IN')
+                return `${b.label} spending is ₹${amt} over your ${b.targetPct}% target — consider reducing it`
+              })
+            if (!suggestions.length) return (
+              <p className="text-xs text-emerald-400">🎉 Great start — your spending is close to your framework targets.</p>
+            )
+            return (
+              <ul className="space-y-1.5">
+                {suggestions.map((s, i) => (
+                  <li key={i} className="text-xs text-white/40 leading-relaxed flex items-start gap-1.5">
+                    <span className="text-white/20 mt-0.5">→</span> {s}
+                  </li>
+                ))}
+              </ul>
+            )
+          })()}
         </div>
       )}
 
