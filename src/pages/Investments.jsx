@@ -1,18 +1,18 @@
 /**
- * Investments page — Phase 3 Week 13 (updated)
+ * Investments page — Phase 3 Week 14 (updated)
  *
- * Additions over Week 12:
- *   - Investment reminder banners (FD maturing, price update needed, PPF March)
- *   - InvestmentDetail extracted to its own file (enhanced: price chart, FD countdown, PPF table)
- *   - BenchmarkComparison chart (week 13)
- *   - DiversificationChart (sector + risk profile, week 13)
+ * Week 14 additions:
+ *   - InvestmentNewsPanel ("Market Pulse" / "General Tips")
+ *   - SIPTracker (filter tab: SIPs)
+ *   - RebalancingPanel (collapsible)
+ *   - Portfolio JSON export (anonymized — no names/tickers)
  */
 import { useState, useMemo } from 'react'
 import { format } from 'date-fns'
 import {
   BarChart3, Plus, RefreshCw,
   MoreHorizontal, Pencil, Trash2,
-  ChevronDown, ChevronUp, Bell, X,
+  ChevronDown, ChevronUp, Bell, X, Download,
 } from 'lucide-react'
 import { useInvestments } from '../hooks/useInvestments.js'
 import { useAppStore } from '../store/appStore.js'
@@ -27,6 +27,9 @@ import PortfolioValueChart from '../components/investments/PortfolioValueChart.j
 import BenchmarkComparison from '../components/investments/BenchmarkComparison.jsx'
 import DiversificationChart from '../components/investments/DiversificationChart.jsx'
 import InvestmentDetail from '../components/investments/InvestmentDetail.jsx'
+import InvestmentNewsPanel from '../components/investments/InvestmentNewsPanel.jsx'
+import SIPTracker from '../components/investments/SIPTracker.jsx'
+import RebalancingPanel from '../components/investments/RebalancingPanel.jsx'
 
 // ─── Filter / sort config ─────────────────────────────────────────────────────
 
@@ -38,6 +41,7 @@ const FILTERS = [
   { id: 'gold',        label: 'Gold' },
   { id: 'ppf_nps',     label: 'PPF / NPS' },
   { id: 'real_estate', label: 'Real Estate' },
+  { id: 'sip',         label: '🔄 SIPs' },
 ]
 
 const SORTS = [
@@ -66,9 +70,9 @@ function SummaryPill({ label, value, sub, valueColor = 'text-white' }) {
 // ─── Reminder banners ─────────────────────────────────────────────────────────
 
 const URGENCY_STYLE = {
-  high:   { bg: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.25)',   icon: '🔴', textColor: '#FCA5A5' },
-  medium: { bg: 'rgba(234,179,8,0.08)',  border: 'rgba(234,179,8,0.25)',  icon: '🟡', textColor: '#FDE68A' },
-  low:    { bg: 'rgba(99,102,241,0.08)', border: 'rgba(99,102,241,0.25)', icon: '🔵', textColor: '#A5B4FC' },
+  high:   { bg: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.25)',   textColor: '#FCA5A5' },
+  medium: { bg: 'rgba(234,179,8,0.08)',   border: 'rgba(234,179,8,0.25)',   textColor: '#FDE68A' },
+  low:    { bg: 'rgba(99,102,241,0.08)',  border: 'rgba(99,102,241,0.25)',  textColor: '#A5B4FC' },
 }
 
 function ReminderBanners({ reminders, onDismiss }) {
@@ -84,18 +88,27 @@ function ReminderBanners({ reminders, onDismiss }) {
             style={{ background: s.bg, border: `1px solid ${s.border}` }}
           >
             <Bell className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: s.textColor }} />
-            <p className="text-xs flex-1 leading-relaxed" style={{ color: s.textColor }}>
-              {r.message}
-            </p>
-            <button
-              onClick={() => onDismiss(r.id)}
-              className="flex-shrink-0 text-white/20 hover:text-white/50 transition-colors"
-            >
+            <p className="text-xs flex-1 leading-relaxed" style={{ color: s.textColor }}>{r.message}</p>
+            <button onClick={() => onDismiss(r.id)} className="flex-shrink-0 text-white/20 hover:text-white/50 transition-colors">
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
         )
       })}
+    </div>
+  )
+}
+
+// ─── Chart card wrapper ───────────────────────────────────────────────────────
+
+function ChartCard({ title, subtitle, children }) {
+  return (
+    <div className="rounded-2xl p-5 space-y-4" style={{ background: '#1C1B29', border: '1px solid rgba(255,255,255,0.08)' }}>
+      <div>
+        <p className="text-sm font-semibold text-white">{title}</p>
+        {subtitle && <p className="text-xs text-white/35 mt-0.5">{subtitle}</p>}
+      </div>
+      {children}
     </div>
   )
 }
@@ -111,23 +124,16 @@ function InvestmentCard({ inv, onRefresh, onEdit, onUpdatePrice }) {
 
   const isGain         = inv._gain_loss_paise >= 0
   const canUpdatePrice = ['stocks', 'mutual_fund', 'gold'].includes(inv.asset_class)
-
-  const holdingDays = inv._holding_period_days
-  const holdingStr  =
-    holdingDays >= 365 ? `${Math.floor(holdingDays / 365)}y ${Math.floor((holdingDays % 365) / 30)}m`
-    : holdingDays >= 30 ? `${Math.floor(holdingDays / 30)}m`
-    : `${holdingDays}d`
+  const holdingDays    = inv._holding_period_days
+  const holdingStr     = holdingDays >= 365
+    ? `${Math.floor(holdingDays / 365)}y ${Math.floor((holdingDays % 365) / 30)}m`
+    : holdingDays >= 30 ? `${Math.floor(holdingDays / 30)}m` : `${holdingDays}d`
 
   async function handleDelete() {
     if (!window.confirm(`Delete "${inv._name}"? This cannot be undone.`)) return
     setDeleting(true)
-    try {
-      await deleteRecord('investments', inv.id)
-      onRefresh()
-    } catch (err) {
-      console.error('[InvestmentCard] delete failed:', err)
-      setDeleting(false)
-    }
+    try { await deleteRecord('investments', inv.id); onRefresh() }
+    catch (err) { console.error('[InvestmentCard] delete failed:', err); setDeleting(false) }
   }
 
   return (
@@ -154,6 +160,9 @@ function InvestmentCard({ inv, onRefresh, onEdit, onUpdatePrice }) {
                 >
                   {meta.label}
                 </span>
+                {inv.is_sip && (
+                  <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-indigo-500/10 text-indigo-400">SIP</span>
+                )}
                 {holdingDays > 0 && (
                   <span className="text-[10px] text-white/30">{holdingStr} held</span>
                 )}
@@ -161,7 +170,6 @@ function InvestmentCard({ inv, onRefresh, onEdit, onUpdatePrice }) {
             </div>
           </div>
 
-          {/* Actions + menu */}
           <div className="flex items-center gap-1 flex-shrink-0">
             {canUpdatePrice && (
               <button
@@ -212,39 +220,27 @@ function InvestmentCard({ inv, onRefresh, onEdit, onUpdatePrice }) {
         <div className="grid grid-cols-3 gap-3 mb-4">
           <div>
             <p className="text-[10px] text-white/35 uppercase tracking-wider mb-0.5">Invested</p>
-            <p className="text-sm font-bold font-numeric text-white/70">
-              {formatINRCompact(inv._invested_paise)}
-            </p>
+            <p className="text-sm font-bold font-numeric text-white/70">{formatINRCompact(inv._invested_paise)}</p>
           </div>
           <div>
             <p className="text-[10px] text-white/35 uppercase tracking-wider mb-0.5">Current</p>
-            <p className="text-sm font-bold font-numeric text-white/90">
-              {formatINRCompact(inv._current_value_paise)}
-            </p>
+            <p className="text-sm font-bold font-numeric text-white/90">{formatINRCompact(inv._current_value_paise)}</p>
           </div>
           <div>
             <p className="text-[10px] text-white/35 uppercase tracking-wider mb-0.5">Return</p>
-            <p
-              className="text-sm font-bold font-numeric"
-              style={{ color: isGain ? '#10B981' : '#EF4444' }}
-            >
+            <p className="text-sm font-bold font-numeric" style={{ color: isGain ? '#10B981' : '#EF4444' }}>
               {isGain ? '+' : ''}{inv._gain_loss_pct.toFixed(2)}%
             </p>
           </div>
         </div>
 
         {/* Gain/loss bar */}
-        <div
-          className="h-1.5 rounded-full overflow-hidden mb-4"
-          style={{ background: 'rgba(255,255,255,0.06)' }}
-        >
+        <div className="h-1.5 rounded-full overflow-hidden mb-4" style={{ background: 'rgba(255,255,255,0.06)' }}>
           <div
             className="h-full rounded-full transition-all duration-700"
             style={{
               width: `${Math.min(100, Math.abs(inv._gain_loss_pct))}%`,
-              background: isGain
-                ? 'linear-gradient(90deg, #10B981, #34D399aa)'
-                : 'linear-gradient(90deg, #EF4444, #F87171aa)',
+              background: isGain ? 'linear-gradient(90deg, #10B981, #34D399aa)' : 'linear-gradient(90deg, #EF4444, #F87171aa)',
             }}
           />
         </div>
@@ -255,9 +251,7 @@ function InvestmentCard({ inv, onRefresh, onEdit, onUpdatePrice }) {
             {isGain ? '+' : '−'}{formatINRCompact(Math.abs(inv._gain_loss_paise))} {isGain ? 'gain' : 'loss'}
           </span>
           {inv._buy_date_str && (
-            <span className="text-white/25">
-              Since {format(new Date(inv._buy_date_str), 'dd MMM yyyy')}
-            </span>
+            <span className="text-white/25">Since {format(new Date(inv._buy_date_str), 'dd MMM yyyy')}</span>
           )}
         </div>
 
@@ -266,13 +260,10 @@ function InvestmentCard({ inv, onRefresh, onEdit, onUpdatePrice }) {
           onClick={() => setExpanded((e) => !e)}
           className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs text-white/30 hover:text-white/60 hover:bg-white/5 transition-all"
         >
-          {expanded
-            ? <><ChevronUp className="w-3.5 h-3.5" /> Hide details</>
-            : <><ChevronDown className="w-3.5 h-3.5" /> View details</>}
+          {expanded ? <><ChevronUp className="w-3.5 h-3.5" /> Hide details</> : <><ChevronDown className="w-3.5 h-3.5" /> View details</>}
         </button>
       </div>
 
-      {/* Expanded detail */}
       {expanded && (
         <div className="px-5 pb-5">
           <InvestmentDetail inv={inv} onUpdatePrice={onUpdatePrice} />
@@ -288,21 +279,54 @@ function Skeleton({ className = '' }) {
   return <div className={`animate-pulse bg-white/6 rounded-xl ${className}`} />
 }
 
-// ─── Chart section wrapper ────────────────────────────────────────────────────
+// ─── Portfolio export ─────────────────────────────────────────────────────────
 
-function ChartCard({ title, subtitle, children }) {
-  return (
-    <div
-      className="rounded-2xl p-5 space-y-4"
-      style={{ background: '#1C1B29', border: '1px solid rgba(255,255,255,0.08)' }}
-    >
-      <div>
-        <p className="text-sm font-semibold text-white">{title}</p>
-        {subtitle && <p className="text-xs text-white/35 mt-0.5">{subtitle}</p>}
-      </div>
-      {children}
-    </div>
-  )
+function exportPortfolio({ enrichedInvestments, totalInvested, currentValue, totalGainLoss, totalGainLossPct, assetAllocation }) {
+  const sipInvestments = enrichedInvestments.filter((i) => i.is_sip)
+  const payload = {
+    exported_at:      new Date().toISOString(),
+    note:             'Holdings exported with anonymized data — no names or tickers included.',
+    portfolio_summary: {
+      total_invested_paise: totalInvested,
+      current_value_paise:  currentValue,
+      gain_loss_paise:      totalGainLoss,
+      gain_loss_pct:        totalGainLossPct,
+      holdings_count:       enrichedInvestments.length,
+    },
+    asset_allocation: assetAllocation.map((a) => ({
+      asset_class:   a.asset_class,
+      value_paise:   a.value_paise,
+      allocation_pct: a.pct,
+    })),
+    holdings: enrichedInvestments.map((inv) => ({
+      asset_class:        inv.asset_class,
+      holding_period_days: inv._holding_period_days,
+      invested_paise:     inv._invested_paise,
+      current_value_paise: inv._current_value_paise,
+      gain_loss_paise:    inv._gain_loss_paise,
+      gain_loss_pct:      inv._gain_loss_pct,
+      annualized_return:  inv._annualized_return,
+      // Privacy: no names, tickers, fund names, quantity, or price details
+    })),
+    sip_summary: sipInvestments.length > 0 ? {
+      sip_count:          sipInvestments.length,
+      monthly_total_paise: sipInvestments.reduce((s, i) => s + (i.sip_amount_paise || 0), 0),
+    } : null,
+    total_returns: {
+      invested_paise:     totalInvested,
+      current_paise:      currentValue,
+      absolute_paise:     totalGainLoss,
+      percentage:         totalGainLossPct,
+    },
+  }
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href     = url
+  a.download = `finio-portfolio-${format(new Date(), 'yyyy-MM-dd')}.json`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -317,28 +341,27 @@ export default function Investments() {
     loading, error, refresh,
   } = useInvestments()
 
-  const [filter,      setFilter]      = useState('all')
-  const [sort,        setSort]        = useState('value')
-  const [showAdd,     setShowAdd]     = useState(false)
-  const [editInv,     setEditInv]     = useState(null)
-  const [updateInv,   setUpdateInv]   = useState(null)
-  const [showCharts,  setShowCharts]  = useState(true)
+  const [filter,     setFilter]     = useState('all')
+  const [sort,       setSort]       = useState('value')
+  const [showAdd,    setShowAdd]    = useState(false)
+  const [editInv,    setEditInv]    = useState(null)
+  const [updateInv,  setUpdateInv]  = useState(null)
+  const [showCharts, setShowCharts] = useState(true)
+  const [dismissed,  setDismissed]  = useState(new Set())
 
-  // Dismissed reminder IDs (session-only)
-  const [dismissed, setDismissed] = useState(new Set())
-
-  // Generate reminders
   const allReminders = useMemo(
     () => (!loading && enrichedInvestments.length ? generateInvestmentReminders(enrichedInvestments) : []),
     [enrichedInvestments, loading]
   )
   const visibleReminders = allReminders.filter((r) => !dismissed.has(r.id))
+  function dismissReminder(id) { setDismissed((prev) => new Set([...prev, id])) }
 
-  function dismissReminder(id) {
-    setDismissed((prev) => new Set([...prev, id]))
-  }
+  const mutualFunds = enrichedInvestments.filter((i) => i.asset_class === 'mutual_fund')
 
   const displayed = useMemo(() => {
+    // SIP tab handled separately
+    if (filter === 'sip') return []
+
     let list = filter === 'all'
       ? enrichedInvestments
       : enrichedInvestments.filter((i) => i.asset_class === filter)
@@ -359,11 +382,8 @@ export default function Investments() {
 
   const isGain  = totalGainLoss >= 0
   const hasData = enrichedInvestments.length > 0
-
-  // Does any eligible holding have price history to compute benchmark?
-  const hasBenchmarkHistory = enrichedInvestments.some(
-    (i) => i._holding_period_days > 30 && i._invested_paise > 0
-  )
+  const hasBenchmarkHistory = enrichedInvestments.some((i) => i._holding_period_days > 30 && i._invested_paise > 0)
+  const sipCount = mutualFunds.filter((i) => i.is_sip).length
 
   return (
     <div className="space-y-6">
@@ -381,19 +401,29 @@ export default function Investments() {
         </div>
         <div className="flex items-center gap-2">
           {hasData && (
-            <button
-              onClick={() => setShowCharts((s) => !s)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all hover:opacity-90"
-              style={{
-                background: showCharts ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.06)',
-                border: `1px solid ${showCharts ? 'rgba(99,102,241,0.35)' : 'rgba(255,255,255,0.1)'}`,
-                color: showCharts ? '#A5B4FC' : 'rgba(255,255,255,0.5)',
-              }}
-            >
-              <BarChart3 className="w-4 h-4" />
-              Charts
-              {showCharts ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            </button>
+            <>
+              <button
+                onClick={() => exportPortfolio({ enrichedInvestments, totalInvested, currentValue, totalGainLoss, totalGainLossPct, assetAllocation })}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium text-white/40 hover:text-white/70 hover:bg-white/6 transition-all"
+                title="Export portfolio (anonymized JSON)"
+              >
+                <Download className="w-4 h-4" />
+                <span className="hidden sm:inline">Export</span>
+              </button>
+              <button
+                onClick={() => setShowCharts((s) => !s)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all hover:opacity-90"
+                style={{
+                  background: showCharts ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.06)',
+                  border: `1px solid ${showCharts ? 'rgba(99,102,241,0.35)' : 'rgba(255,255,255,0.1)'}`,
+                  color: showCharts ? '#A5B4FC' : 'rgba(255,255,255,0.5)',
+                }}
+              >
+                <BarChart3 className="w-4 h-4" />
+                Charts
+                {showCharts ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            </>
           )}
           <button
             onClick={() => setShowAdd(true)}
@@ -424,12 +454,8 @@ export default function Investments() {
       {/* ── Loading ───────────────────────────────────────────────────────── */}
       {loading && (
         <div className="space-y-4">
-          <div className="flex gap-3">
-            {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="flex-1 h-20" />)}
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-52" />)}
-          </div>
+          <div className="flex gap-3">{[0,1,2,3].map((i) => <Skeleton key={i} className="flex-1 h-20" />)}</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{[0,1,2,3].map((i) => <Skeleton key={i} className="h-52" />)}</div>
         </div>
       )}
 
@@ -439,24 +465,18 @@ export default function Investments() {
           className="rounded-2xl p-12 flex flex-col items-center text-center gap-5"
           style={{ background: '#1C1B29', border: '1px solid rgba(255,255,255,0.07)' }}
         >
-          <div
-            className="w-20 h-20 rounded-3xl flex items-center justify-center text-4xl"
-            style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)' }}
-          >
+          <div className="w-20 h-20 rounded-3xl flex items-center justify-center text-4xl" style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)' }}>
             📈
           </div>
           <div>
             <p className="text-lg font-semibold text-white">No investments tracked yet</p>
             <p className="text-sm text-white/40 mt-1.5 max-w-sm leading-relaxed">
               Track your entire portfolio — stocks, mutual funds, FDs, PPF, gold, and real estate.
-              See allocation, gain/loss, and portfolio trends in one place.
             </p>
           </div>
           <div className="grid grid-cols-3 gap-2 w-full max-w-md">
             {['📈 Stocks', '🔄 Mutual Funds', '🏦 Fixed Deposits', '🪙 Gold', '🏛️ PPF / NPS', '🏠 Real Estate'].map((a) => (
-              <div key={a} className="rounded-xl p-2.5 text-xs text-white/40" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                {a}
-              </div>
+              <div key={a} className="rounded-xl p-2.5 text-xs text-white/40" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>{a}</div>
             ))}
           </div>
           <button
@@ -464,8 +484,7 @@ export default function Investments() {
             className="flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-95"
             style={{ background: '#6366F1' }}
           >
-            <Plus className="w-4 h-4" />
-            Add Your First Investment
+            <Plus className="w-4 h-4" /> Add Your First Investment
           </button>
         </div>
       )}
@@ -473,18 +492,8 @@ export default function Investments() {
       {/* ── Summary bar ───────────────────────────────────────────────────── */}
       {!loading && hasData && (
         <div className="flex flex-wrap gap-3">
-          <SummaryPill
-            label="Total Invested"
-            value={formatINRCompact(totalInvested)}
-            sub={`${enrichedInvestments.length} holdings`}
-            valueColor="text-indigo-300"
-          />
-          <SummaryPill
-            label="Current Value"
-            value={formatINRCompact(currentValue)}
-            sub={isGain ? 'Portfolio is up' : 'Portfolio is down'}
-            valueColor="text-white"
-          />
+          <SummaryPill label="Total Invested" value={formatINRCompact(totalInvested)} sub={`${enrichedInvestments.length} holdings`} valueColor="text-indigo-300" />
+          <SummaryPill label="Current Value"  value={formatINRCompact(currentValue)}  sub={isGain ? 'Portfolio is up' : 'Portfolio is down'} />
           <SummaryPill
             label={isGain ? 'Total Gain' : 'Total Loss'}
             value={`${isGain ? '+' : '−'}${formatINRCompact(Math.abs(totalGainLoss))}`}
@@ -492,60 +501,35 @@ export default function Investments() {
             valueColor={isGain ? 'text-emerald-400' : 'text-red-400'}
           />
           {bestPerformer && (
-            <SummaryPill
-              label="Best Performer"
-              value={bestPerformer._name}
-              sub={`+${bestPerformer._gain_loss_pct.toFixed(2)}%`}
-              valueColor="text-emerald-400"
-            />
+            <SummaryPill label="Best Performer"  value={bestPerformer._name}  sub={`+${bestPerformer._gain_loss_pct.toFixed(2)}%`}  valueColor="text-emerald-400" />
           )}
           {worstPerformer && worstPerformer.id !== bestPerformer?.id && (
-            <SummaryPill
-              label="Worst Performer"
-              value={worstPerformer._name}
-              sub={`${worstPerformer._gain_loss_pct.toFixed(2)}%`}
-              valueColor="text-red-400"
-            />
+            <SummaryPill label="Worst Performer" value={worstPerformer._name} sub={`${worstPerformer._gain_loss_pct.toFixed(2)}%`} valueColor="text-red-400" />
           )}
         </div>
+      )}
+
+      {/* ── News panel ────────────────────────────────────────────────────── */}
+      {!loading && hasData && (
+        <InvestmentNewsPanel enrichedInvestments={enrichedInvestments} />
       )}
 
       {/* ── Charts ────────────────────────────────────────────────────────── */}
       {!loading && hasData && showCharts && (
         <div className="space-y-5">
-          {/* Row 1 — Allocation + Value over time */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <ChartCard
-              title="Asset Allocation"
-              subtitle="Distribution of your portfolio by asset class"
-            >
+            <ChartCard title="Asset Allocation" subtitle="Distribution of your portfolio by asset class">
               <AssetAllocationChart assetAllocation={assetAllocation} currentValue={currentValue} />
             </ChartCard>
-
-            <ChartCard
-              title="Portfolio Value Over Time"
-              subtitle="Invested capital vs estimated market value"
-            >
+            <ChartCard title="Portfolio Value Over Time" subtitle="Invested capital vs estimated market value">
               <PortfolioValueChart enrichedInvestments={enrichedInvestments} />
             </ChartCard>
           </div>
-
-          {/* Row 2 — Benchmark + Diversification */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <ChartCard
-              title="Benchmark Comparison"
-              subtitle="Your annualized return vs approximate historical benchmarks"
-            >
-              <BenchmarkComparison
-                totalAnnualizedReturn={totalAnnualizedReturn}
-                hasHistory={hasBenchmarkHistory}
-              />
+            <ChartCard title="Benchmark Comparison" subtitle="Your annualized return vs approximate historical benchmarks">
+              <BenchmarkComparison totalAnnualizedReturn={totalAnnualizedReturn} hasHistory={hasBenchmarkHistory} />
             </ChartCard>
-
-            <ChartCard
-              title="Diversification & Risk"
-              subtitle="Sector concentration and risk profile of your portfolio"
-            >
+            <ChartCard title="Diversification & Risk" subtitle="Sector concentration and risk profile">
               <DiversificationChart
                 sectorAllocation={sectorAllocation}
                 assetAllocation={assetAllocation}
@@ -558,23 +542,39 @@ export default function Investments() {
         </div>
       )}
 
+      {/* ── Rebalancing panel ──────────────────────────────────────────────── */}
+      {!loading && hasData && (
+        <RebalancingPanel enrichedInvestments={enrichedInvestments} />
+      )}
+
       {/* ── Filter + sort ─────────────────────────────────────────────────── */}
       {!loading && hasData && (
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-1 p-1 rounded-xl bg-white/5 border border-white/8 overflow-x-auto">
             {FILTERS.map((f) => {
-              const count = f.id === 'all'
-                ? enrichedInvestments.length
-                : enrichedInvestments.filter((i) => i.asset_class === f.id).length
+              if (f.id === 'sip') {
+                if (!mutualFunds.length) return null
+                return (
+                  <button
+                    key={f.id}
+                    onClick={() => setFilter(f.id)}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
+                      filter === 'sip' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/40' : 'text-white/40 hover:text-white/70'
+                    }`}
+                  >
+                    {f.label}
+                    {sipCount > 0 && <span className="ml-1 text-[9px] opacity-60">{sipCount}</span>}
+                  </button>
+                )
+              }
+              const count = f.id === 'all' ? enrichedInvestments.length : enrichedInvestments.filter((i) => i.asset_class === f.id).length
               if (f.id !== 'all' && count === 0) return null
               return (
                 <button
                   key={f.id}
                   onClick={() => setFilter(f.id)}
                   className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
-                    filter === f.id
-                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/40'
-                      : 'text-white/40 hover:text-white/70'
+                    filter === f.id ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/40' : 'text-white/40 hover:text-white/70'
                   }`}
                 >
                   {f.label}
@@ -583,60 +583,44 @@ export default function Investments() {
               )
             })}
           </div>
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value)}
-            className="px-3 py-1.5 rounded-lg text-xs text-white/50 bg-white/5 border border-white/8 cursor-pointer outline-none"
-            style={{ colorScheme: 'dark' }}
-          >
-            {SORTS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </select>
+          {filter !== 'sip' && (
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value)}
+              className="px-3 py-1.5 rounded-lg text-xs text-white/50 bg-white/5 border border-white/8 cursor-pointer outline-none"
+              style={{ colorScheme: 'dark' }}
+            >
+              {SORTS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          )}
         </div>
       )}
 
+      {/* ── SIP Tracker ───────────────────────────────────────────────────── */}
+      {!loading && filter === 'sip' && (
+        <SIPTracker mutualFunds={mutualFunds} onRefresh={refresh} />
+      )}
+
       {/* ── Investment cards ───────────────────────────────────────────────── */}
-      {!loading && displayed.length > 0 && (
+      {!loading && filter !== 'sip' && displayed.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {displayed.map((inv) => (
-            <InvestmentCard
-              key={inv.id}
-              inv={inv}
-              onRefresh={refresh}
-              onEdit={(i) => setEditInv(i)}
-              onUpdatePrice={(i) => setUpdateInv(i)}
-            />
+            <InvestmentCard key={inv.id} inv={inv} onRefresh={refresh} onEdit={(i) => setEditInv(i)} onUpdatePrice={(i) => setUpdateInv(i)} />
           ))}
         </div>
       )}
 
-      {/* ── No results for filter ──────────────────────────────────────────── */}
-      {!loading && hasData && displayed.length === 0 && (
+      {/* ── No results ────────────────────────────────────────────────────── */}
+      {!loading && hasData && filter !== 'sip' && displayed.length === 0 && (
         <div className="text-center py-10">
           <p className="text-sm text-white/30">No {FILTERS.find((f) => f.id === filter)?.label} investments</p>
         </div>
       )}
 
       {/* ── Modals ────────────────────────────────────────────────────────── */}
-      {showAdd && (
-        <AddInvestmentModal
-          onClose={() => setShowAdd(false)}
-          onSaved={() => { refresh(); setShowAdd(false) }}
-        />
-      )}
-      {editInv && (
-        <AddInvestmentModal
-          editInvestment={editInv}
-          onClose={() => setEditInv(null)}
-          onSaved={() => { refresh(); setEditInv(null) }}
-        />
-      )}
-      {updateInv && (
-        <UpdatePriceModal
-          investment={updateInv}
-          onClose={() => setUpdateInv(null)}
-          onSaved={() => { refresh(); setUpdateInv(null) }}
-        />
-      )}
+      {showAdd && <AddInvestmentModal onClose={() => setShowAdd(false)} onSaved={() => { refresh(); setShowAdd(false) }} />}
+      {editInv && <AddInvestmentModal editInvestment={editInv} onClose={() => setEditInv(null)} onSaved={() => { refresh(); setEditInv(null) }} />}
+      {updateInv && <UpdatePriceModal investment={updateInv} onClose={() => setUpdateInv(null)} onSaved={() => { refresh(); setUpdateInv(null) }} />}
     </div>
   )
 }

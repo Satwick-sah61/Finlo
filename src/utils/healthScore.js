@@ -1,26 +1,43 @@
-// Pure function — zero side effects. Only reads inputs, never writes to DB or store.
-// Called by useFinancials to attach a health score to every summary snapshot.
-// Will be enriched in Phase 2 (loans) and Phase 3 (investments) with real data.
+/**
+ * calculateHealthScore — pure function, zero side effects.
+ *
+ * Revised in Phase 3 (Week 14) to five equal 20pt components:
+ *   1. Savings Rate       — 20pts
+ *   2. Expense Control    — 20pts
+ *   3. Emergency Fund     — 20pts (now real — was placeholder)
+ *   4. Debt Load          — 20pts
+ *   5. Investment Quality — 20pts (new — Phase 3)
+ *
+ * All callers should now pass the new optional params.
+ * Older callers without the new params gracefully default
+ * to neutral mid-scores (not 0 or max) to avoid jarring drops.
+ */
+
 export function calculateHealthScore({
-  savingsRate = 0,
-  totalMonthlyIncomePaise = 0,
+  // Core financial data
+  savingsRate              = 0,
+  totalMonthlyIncomePaise  = 0,
   totalMonthlyExpensesPaise = 0,
-  debtToIncomeRatio = null, // null = no loan data yet; 0 = no loans
-  emergencyMonths = 0,
+  // Debt
+  debtToIncomeRatio        = null, // null = not yet loaded
+  // Emergency fund (months of expenses covered by liquid savings)
+  emergencyFundMonths      = null, // null = not yet computed
+  // Investment quality
+  assetClassCount          = null, // null = not yet loaded
+  hasSIP                   = false,
 }) {
   const factors = []
   let score = 0
 
-  // ── Savings Rate (30 pts) ─────────────────────────────────────────────────
-  // <10% = 0, 10–20% = 15, 20–30% = 22, >30% = 30
-  let savingsPts = 0
-  if (savingsRate >= 30) savingsPts = 30
-  else if (savingsRate >= 20) savingsPts = 22
-  else if (savingsRate >= 10) savingsPts = 15
-  score += savingsPts
+  // ── 1. Savings Rate (20pts) ───────────────────────────────────────────────
+  let savPts = 0
+  if (savingsRate >= 30) savPts = 20
+  else if (savingsRate >= 20) savPts = 15
+  else if (savingsRate >= 10) savPts = 10
+  score += savPts
   factors.push({
     factor: 'Savings Rate',
-    impact: savingsPts >= 22 ? 'positive' : savingsPts >= 15 ? 'neutral' : 'negative',
+    impact: savPts >= 15 ? 'positive' : savPts >= 10 ? 'neutral' : 'negative',
     detail:
       totalMonthlyIncomePaise === 0
         ? 'Add income sources to calculate your savings rate'
@@ -29,100 +46,149 @@ export function calculateHealthScore({
         : savingsRate >= 20
         ? `Good — you save ${savingsRate}% of your income`
         : savingsRate >= 10
-        ? `Fair — aim to grow savings rate above 20%`
+        ? 'Fair — aim to grow your savings rate above 20%'
         : savingsRate > 0
         ? `Low — saving only ${savingsRate}% leaves little buffer`
         : 'Expenses exceed income — you are running a deficit',
-    points: savingsPts,
-    maxPoints: 30,
-  })
-
-  // ── Expense Control (25 pts) ──────────────────────────────────────────────
-  // Scored on expenses/income ratio: ≤50% = 25, ≤70% = 18, ≤90% = 10, ≤100% = 3, >100% = 0
-  const expenseRatio =
-    totalMonthlyIncomePaise > 0
-      ? totalMonthlyExpensesPaise / totalMonthlyIncomePaise
-      : 0
-  let expensePts = 0
-  if (totalMonthlyIncomePaise === 0) {
-    expensePts = 0
-  } else if (expenseRatio <= 0.5) expensePts = 25
-  else if (expenseRatio <= 0.7) expensePts = 18
-  else if (expenseRatio <= 0.9) expensePts = 10
-  else if (expenseRatio <= 1.0) expensePts = 3
-  score += expensePts
-  const expPct = Math.round(expenseRatio * 100)
-  factors.push({
-    factor: 'Expense Control',
-    impact: expensePts >= 18 ? 'positive' : expensePts >= 10 ? 'neutral' : 'negative',
-    detail:
-      totalMonthlyIncomePaise === 0
-        ? 'Add income to evaluate your expense ratio'
-        : expenseRatio > 1
-        ? `Spending ${expPct}% of income — actively in deficit`
-        : expenseRatio > 0.9
-        ? `Spending ${expPct}% of income — very little headroom`
-        : expenseRatio > 0.7
-        ? `Spending ${expPct}% of income — aim below 70%`
-        : `Spending ${expPct}% of income — well controlled`,
-    points: expensePts,
-    maxPoints: 25,
-  })
-
-  // ── Emergency Fund (20 pts) — placeholder until fund tracking is live ─────
-  const emergencyPts = 20
-  score += emergencyPts
-  factors.push({
-    factor: 'Emergency Fund',
-    impact: 'neutral',
-    detail: 'Emergency fund tracking coming in a future update',
-    points: emergencyPts,
+    points:    savPts,
     maxPoints: 20,
   })
 
-  // ── Debt Load (25 pts) ────────────────────────────────────────────────────
-  // DTI = totalMonthlyEMI / totalMonthlyIncome
-  // null = loan data not yet loaded (placeholder)
-  let debtPts = 25
-  let debtImpact = 'positive'
-  let debtDetail = 'No active loans recorded — full score applied'
+  // ── 2. Expense Control (20pts) ────────────────────────────────────────────
+  const expRatio = totalMonthlyIncomePaise > 0
+    ? totalMonthlyExpensesPaise / totalMonthlyIncomePaise
+    : 0
+  let expPts = 0
+  if (totalMonthlyIncomePaise === 0) {
+    expPts = 10 // neutral until income is set
+  } else if (expRatio <= 0.5) expPts = 20
+  else if (expRatio <= 0.7)   expPts = 14
+  else if (expRatio <= 0.9)   expPts = 8
+  else if (expRatio <= 1.0)   expPts = 2
+  score += expPts
+  const expPct = Math.round(expRatio * 100)
+  factors.push({
+    factor: 'Expense Control',
+    impact: expPts >= 14 ? 'positive' : expPts >= 8 ? 'neutral' : 'negative',
+    detail:
+      totalMonthlyIncomePaise === 0
+        ? 'Add income to evaluate your expense ratio'
+        : expRatio > 1
+        ? `Spending ${expPct}% of income — actively in deficit`
+        : expRatio > 0.9
+        ? `Spending ${expPct}% of income — very little headroom`
+        : expRatio > 0.7
+        ? `Spending ${expPct}% of income — aim below 70%`
+        : `Spending ${expPct}% of income — well controlled`,
+    points:    expPts,
+    maxPoints: 20,
+  })
 
-  if (debtToIncomeRatio === null) {
-    debtPts = 20
-    debtImpact = 'neutral'
-    debtDetail = 'Loan data loading…'
-  } else if (debtToIncomeRatio === 0) {
-    debtPts = 25
-    debtImpact = 'positive'
-    debtDetail = 'No active loans recorded — full score applied'
-  } else {
-    const dtiPct = Math.round(debtToIncomeRatio * 100)
-    if (debtToIncomeRatio < 0.3) {
-      debtPts = 20
-      debtImpact = 'positive'
-      debtDetail = `Debt-to-income ratio ${dtiPct}% — well managed`
-    } else if (debtToIncomeRatio < 0.5) {
-      debtPts = 12
-      debtImpact = 'neutral'
-      debtDetail = `Debt-to-income ratio ${dtiPct}% — aim below 30%`
+  // ── 3. Emergency Fund (20pts) — now real ─────────────────────────────────
+  // emergencyFundMonths = months of expenses covered by liquid savings
+  // null = data not yet available → neutral 10pts
+  let emPts = 10
+  let emImpact = 'neutral'
+  let emDetail = 'Emergency fund data loading…'
+
+  if (emergencyFundMonths !== null) {
+    if (emergencyFundMonths >= 6) {
+      emPts = 20; emImpact = 'positive'
+      emDetail = `${emergencyFundMonths.toFixed(1)} months covered — excellent safety net`
+    } else if (emergencyFundMonths >= 3) {
+      emPts = 15; emImpact = 'positive'
+      emDetail = `${emergencyFundMonths.toFixed(1)} months covered — aim for 6 months`
+    } else if (emergencyFundMonths >= 1) {
+      emPts = 8; emImpact = 'neutral'
+      emDetail = `${emergencyFundMonths.toFixed(1)} months covered — build to at least 3 months`
     } else {
-      debtPts = 5
-      debtImpact = 'negative'
-      debtDetail = `Debt-to-income ratio ${dtiPct}% — high debt burden`
+      emPts = 0; emImpact = 'negative'
+      emDetail = 'No emergency fund detected — create an Emergency Fund goal to track this'
     }
   }
 
+  score += emPts
+  factors.push({
+    factor:    'Emergency Fund',
+    impact:    emImpact,
+    detail:    emDetail,
+    points:    emPts,
+    maxPoints: 20,
+  })
+
+  // ── 4. Debt Load (20pts) ──────────────────────────────────────────────────
+  let debtPts   = 16
+  let debtImpact = 'positive'
+  let debtDetail = 'No active loans — full score applied'
+
+  if (debtToIncomeRatio === null) {
+    debtPts    = 10
+    debtImpact = 'neutral'
+    debtDetail = 'Loan data loading…'
+  } else if (debtToIncomeRatio === 0) {
+    debtPts    = 20
+    debtImpact = 'positive'
+    debtDetail = 'No active loans — full score applied'
+  } else {
+    const dtiPct = Math.round(debtToIncomeRatio * 100)
+    if (debtToIncomeRatio < 0.3) {
+      debtPts = 16; debtImpact = 'positive'
+      debtDetail = `Debt-to-income ${dtiPct}% — well managed`
+    } else if (debtToIncomeRatio < 0.5) {
+      debtPts = 10; debtImpact = 'neutral'
+      debtDetail = `Debt-to-income ${dtiPct}% — aim below 30%`
+    } else {
+      debtPts = 4; debtImpact = 'negative'
+      debtDetail = `Debt-to-income ${dtiPct}% — high debt burden`
+    }
+  }
   score += debtPts
   factors.push({
-    factor: 'Debt Load',
-    impact: debtImpact,
-    detail: debtDetail,
-    points: debtPts,
-    maxPoints: 25,
+    factor:    'Debt Load',
+    impact:    debtImpact,
+    detail:    debtDetail,
+    points:    debtPts,
+    maxPoints: 20,
+  })
+
+  // ── 5. Investment Quality (20pts) — new in Phase 3 ───────────────────────
+  // null = investment data not yet loaded → neutral 10pts
+  let invPts   = 10
+  let invImpact = 'neutral'
+  let invDetail = 'Investment data loading…'
+
+  if (assetClassCount !== null) {
+    if (assetClassCount === 0) {
+      invPts    = 0
+      invImpact = 'negative'
+      invDetail = 'No investments tracked — start with a SIP or FD to build wealth'
+    } else if (assetClassCount === 1) {
+      invPts    = 8
+      invImpact = 'neutral'
+      invDetail = 'Portfolio has one asset class — diversify to reduce risk'
+    } else if (assetClassCount >= 2 && (!hasSIP || assetClassCount < 3)) {
+      invPts    = 14
+      invImpact = 'positive'
+      invDetail = `${assetClassCount} asset classes — add a SIP or a 3rd class for maximum score`
+    } else {
+      // 3+ asset classes AND has SIP
+      invPts    = 20
+      invImpact = 'positive'
+      invDetail = `${assetClassCount} asset classes with active SIP — excellent diversification`
+    }
+  }
+
+  score += invPts
+  factors.push({
+    factor:    'Investment Quality',
+    impact:    invImpact,
+    detail:    invDetail,
+    points:    invPts,
+    maxPoints: 20,
   })
 
   return {
-    score: Math.max(0, Math.min(100, score)),
+    score:   Math.max(0, Math.min(100, score)),
     factors,
   }
 }

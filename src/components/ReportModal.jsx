@@ -2,10 +2,10 @@ import { useEffect, useRef } from 'react'
 import { X, Printer } from 'lucide-react'
 import { generateReport } from '../utils/reportGenerator.js'
 
-export default function ReportModal({ summary, incomeStreams, monthlyHistory, activeLoans = [], onClose }) {
+export default function ReportModal({ summary, incomeStreams, monthlyHistory, activeLoans = [], investmentSummary = null, onClose }) {
   const iframeRef = useRef(null)
 
-  const html = generateReport({ summary, incomeStreams, monthlyHistory, activeLoans })
+  const html = generateReport({ summary, incomeStreams, monthlyHistory, activeLoans, investmentSummary })
 
   useEffect(() => {
     const el = iframeRef.current

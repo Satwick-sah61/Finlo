@@ -14,8 +14,12 @@ export const useAppStore = create((set, get) => ({
 
   // Session-level AI cache for loan health insight
   // Shape: { text: string, hash: string } | null
-  // Cleared on lock/nuke so stale data never persists across sessions
   loanInsightCache: null,
+
+  // Session-level AI cache for investment news
+  // Shape: { items: object[], fetchedAt: number, isFallback: boolean } | null
+  // Cleared on lock/nuke so stale data never persists across sessions
+  investmentNews: null,
 
   setAppState: (appState) => set({ appState }),
 
@@ -24,12 +28,23 @@ export const useAppStore = create((set, get) => ({
 
   completeOnboarding: () => set({ appState: APP_STATE.UNLOCKED }),
 
-  lock: () => set({ cryptoKey: null, appState: APP_STATE.LOCKED, loanInsightCache: null }),
+  lock: () => set({
+    cryptoKey: null,
+    appState: APP_STATE.LOCKED,
+    loanInsightCache: null,
+    investmentNews: null,
+  }),
 
   // Wipes all local state — called after DB deletion in Settings
-  nuke: () => set({ cryptoKey: null, appState: APP_STATE.SETUP, loanInsightCache: null }),
+  nuke: () => set({
+    cryptoKey: null,
+    appState: APP_STATE.SETUP,
+    loanInsightCache: null,
+    investmentNews: null,
+  }),
 
   setLoanInsightCache: (cache) => set({ loanInsightCache: cache }),
+  setInvestmentNews:   (news)  => set({ investmentNews: news }),
 
   isUnlocked: () => {
     const s = get().appState

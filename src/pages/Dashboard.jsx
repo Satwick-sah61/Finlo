@@ -19,6 +19,7 @@ import SurplusAllocationChart, { SurplusAllocationToggle } from '../components/c
 import DashboardInsights from '../components/DashboardInsights.jsx'
 import ReportModal from '../components/ReportModal.jsx'
 import FrameworkDashboardWidget from '../components/framework/FrameworkDashboardWidget.jsx'
+import { useInvestments } from '../hooks/useInvestments.js'
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
 
@@ -231,6 +232,12 @@ export default function Dashboard() {
   const { incomeStreams, expenses, summary, monthlyHistory, loading, error, refresh } = useFinancials(month, numMonths)
   const { goals, totalMonthlyCommitment: goalsMonthlyCommitment } = useGoals()
   const { activeLoans, totalOutstandingPaise, totalMonthlyEMI } = useLoans()
+  const {
+    enrichedInvestments, assetAllocation,
+    totalInvested: invTotalInvested, currentValue: invCurrentValue,
+    totalGainLoss: invGainLoss, totalGainLossPct: invGainLossPct,
+    loading: invLoading,
+  } = useInvestments()
   const [lastUpdated, setLastUpdated] = useState(null)
   const [showReport, setShowReport] = useState(false)
   const [surplusChartType, setSurplusChartType] = useState('donut')
@@ -268,13 +275,28 @@ export default function Dashboard() {
     savingsRate,
   } = mergedSummary
 
-  // Recompute health score with real loan DTI data + merged savings rate
+  // Recompute health score with real loan DTI + investment + emergency fund data
   const dti = totalMonthlyIncomePaise > 0 ? totalMonthlyEMI / totalMonthlyIncomePaise : 0
+
+  // Emergency fund: look for a goal of type 'emergency_fund'
+  const efGoal = goals.find((g) => g.type === 'emergency_fund' || g.type === 'emergency')
+  const efSavedPaise = efGoal ? (Number(efGoal.saved_amount) || 0) * 100 : 0
+  const emergencyFundMonths = totalMonthlyExpensesPaise > 0
+    ? Math.round((efSavedPaise / totalMonthlyExpensesPaise) * 10) / 10
+    : 0
+
+  // Investment quality params
+  const assetClassCount = invLoading ? null : new Set(enrichedInvestments.map((i) => i.asset_class)).size
+  const hasSIP          = enrichedInvestments.some((i) => i.is_sip)
+
   const { score: healthScore, factors: healthFactors } = calculateHealthScore({
     savingsRate,
     totalMonthlyIncomePaise,
     totalMonthlyExpensesPaise,
-    debtToIncomeRatio: dti,
+    debtToIncomeRatio:   dti,
+    emergencyFundMonths: efGoal ? emergencyFundMonths : null,
+    assetClassCount,
+    hasSIP,
   })
 
   const goalAllocatedPaise = computeGoalAllocation(goals)
@@ -565,6 +587,16 @@ export default function Dashboard() {
           incomeStreams={incomeStreams}
           monthlyHistory={monthlyHistory}
           activeLoans={activeLoans}
+          investmentSummary={invTotalInvested > 0 ? {
+            totalInvested:   invTotalInvested,
+            currentValue:    invCurrentValue,
+            totalGainLoss:   invGainLoss,
+            totalGainLossPct: invGainLossPct,
+            assetAllocation,
+            sipMonthlyPaise: enrichedInvestments
+              .filter((i) => i.is_sip)
+              .reduce((s, i) => s + (i.sip_amount_paise || 0), 0),
+          } : null}
           onClose={() => setShowReport(false)}
         />
       )}

@@ -10,7 +10,7 @@ function row(...cells) {
   return `<tr>${cells.map((c, i) => `<td class="${i === cells.length - 1 ? 'num' : ''}">${c}</td>`).join('')}</tr>`
 }
 
-export function generateReport({ summary, incomeStreams, monthlyHistory, activeLoans = [] }) {
+export function generateReport({ summary, incomeStreams, monthlyHistory, activeLoans = [], investmentSummary = null }) {
   const {
     totalMonthlyIncomePaise,
     totalMonthlyExpensesPaise,
@@ -176,6 +176,34 @@ ${activeLoans.length > 0 ? `
   <tbody>${loanRows}</tbody>
 </table>
 ${totalInterestLeft > 0 ? `<p style="font-size:12px;color:#9ca3af;margin-top:8px">Total interest remaining across all loans: <strong style="color:#EF4444">${esc(formatINRCompact(totalInterestLeft))}</strong></p>` : ''}
+` : ''}
+
+${investmentSummary ? `
+<h2>Investment Portfolio</h2>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+  <div class="stat">
+    <div class="stat-label">Total Invested</div>
+    <div class="stat-value" style="color:#6366F1">${esc(formatINRCompact(investmentSummary.totalInvested || 0))}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Current Value</div>
+    <div class="stat-value">${esc(formatINRCompact(investmentSummary.currentValue || 0))}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Overall ${(investmentSummary.totalGainLoss || 0) >= 0 ? 'Gain' : 'Loss'}</div>
+    <div class="stat-value ${(investmentSummary.totalGainLoss || 0) >= 0 ? 'green' : 'red'}">${(investmentSummary.totalGainLoss || 0) >= 0 ? '+' : '−'}${esc(formatINRCompact(Math.abs(investmentSummary.totalGainLoss || 0)))} (${(investmentSummary.totalGainLossPct || 0).toFixed(1)}%)</div>
+  </div>
+</div>
+${(investmentSummary.assetAllocation || []).length > 0 ? `
+<table>
+  <thead><tr><th>Asset Class</th><th class="num">Allocation %</th><th class="num">Value</th></tr></thead>
+  <tbody>${(investmentSummary.assetAllocation || []).map(a => `<tr>
+    <td>${esc(a.asset_class.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()))}</td>
+    <td class="num">${a.pct}%</td>
+    <td class="num">${esc(formatINRCompact(a.value_paise))}</td>
+  </tr>`).join('')}</tbody>
+</table>` : ''}
+${investmentSummary.sipMonthlyPaise > 0 ? `<p style="font-size:12px;color:#6366F1;margin-top:8px">Monthly SIP commitment: <strong>${esc(formatINRCompact(investmentSummary.sipMonthlyPaise))}</strong></p>` : ''}
 ` : ''}
 
 <h2>Monthly Cash Flow History</h2>
