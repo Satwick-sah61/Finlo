@@ -8,7 +8,8 @@ const PAGE_TITLES = {
   '/goals':       'Goals',
   '/loans':       'Loan Manager',
   '/investments': 'Investments',
-  '/whatif':      'What-If Simulator',
+  '/salary-planner': 'Salary Planner',
+  '/whatif':         'What-If Simulator',
   '/ai':          'AI Advisor',
   '/settings':    'Settings',
 }

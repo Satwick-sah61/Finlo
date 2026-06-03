@@ -236,7 +236,7 @@ export function useInvestments() {
       }
     }).sort((a, b) => b.value_paise - a.value_paise)
 
-    // Best / worst performers (by gain_loss_pct, min ₹1000 invested to avoid noise)
+    // Best / worst performers (by gain_loss_pct, min ₹100 invested to avoid noise)
     const eligible = enriched.filter((i) => i._invested_paise >= 100_00) // ₹100 min
     const bestPerformer  = eligible.length > 0
       ? eligible.reduce((b, i) => i._gain_loss_pct > b._gain_loss_pct ? i : b)
@@ -244,6 +244,66 @@ export function useInvestments() {
     const worstPerformer = eligible.length > 1
       ? eligible.reduce((w, i) => i._gain_loss_pct < w._gain_loss_pct ? i : w)
       : null
+
+    // ── Sector allocation (stocks with sector tag only) ────────────────
+    const sectorMap = {}
+    for (const inv of enriched) {
+      if (inv.asset_class === 'stocks' && inv.sector) {
+        sectorMap[inv.sector] = (sectorMap[inv.sector] || 0) + inv._current_value_paise
+      }
+    }
+    const stocksTotal = enriched
+      .filter((i) => i.asset_class === 'stocks')
+      .reduce((s, i) => s + i._current_value_paise, 0)
+    const sectorAllocation = Object.entries(sectorMap)
+      .map(([sector, value]) => ({
+        sector,
+        value_paise: value,
+        pct: stocksTotal > 0 ? Math.round((value / stocksTotal) * 100) : 0,
+      }))
+      .sort((a, b) => b.value_paise - a.value_paise)
+
+    // ── Portfolio risk label ───────────────────────────────────────────
+    // Risk scores: stocks=3 (High), MF=2 (Medium), gold=2, RE=1.5, FD/PPF=1 (Low)
+    const RISK = { stocks: 3, mutual_fund: 2, gold: 2, real_estate: 1.5, fd: 1, ppf_nps: 1 }
+    const totalRiskWeighted = enriched.reduce((s, inv) => {
+      return s + (RISK[inv.asset_class] || 2) * inv._current_value_paise
+    }, 0)
+    const weightedRisk      = currentValue > 0 ? totalRiskWeighted / currentValue : 0
+    const portfolioRiskLabel =
+      weightedRisk >= 2.5 ? 'Aggressive' :
+      weightedRisk >= 1.5 ? 'Balanced'   : 'Conservative'
+    const highRiskPct = currentValue > 0
+      ? Math.round(
+          enriched
+            .filter((i) => (RISK[i.asset_class] || 0) >= 3)
+            .reduce((s, i) => s + i._current_value_paise, 0)
+          / currentValue * 100
+        )
+      : 0
+
+    // ── FDs maturing within 30 days ───────────────────────────────────
+    const todayMs = Date.now()
+    const fdsMaturingSoon = enriched.filter((inv) => {
+      if (inv.asset_class !== 'fd') return false
+      const matDate = inv.maturity_date
+        ? new Date(inv.maturity_date)
+        : inv.start_date
+          ? addMonths(new Date(inv.start_date), Number(inv.tenure_months) || 12)
+          : null
+      if (!matDate) return false
+      const daysLeft = Math.round((matDate.getTime() - todayMs) / 86_400_000)
+      return daysLeft >= 0 && daysLeft <= 30
+    })
+
+    // ── Weighted average annualized return ────────────────────────────
+    // Only investments with >30 days holding and non-zero invested
+    const retEligible    = enriched.filter((i) => i._holding_period_days > 30 && i._invested_paise > 0)
+    const retWeightedSum = retEligible.reduce((s, i) => s + i._annualized_return * i._invested_paise, 0)
+    const retBase        = retEligible.reduce((s, i) => s + i._invested_paise, 0)
+    const totalAnnualizedReturn = retBase > 0
+      ? Math.round((retWeightedSum / retBase) * 100) / 100
+      : 0
 
     return {
       enrichedInvestments: enriched,
@@ -255,6 +315,11 @@ export function useInvestments() {
       bestPerformer,
       worstPerformer,
       assetAllocation,
+      sectorAllocation,
+      portfolioRiskLabel,
+      highRiskPct,
+      fdsMaturingSoon,
+      totalAnnualizedReturn,
     }
   }, [investments])
 

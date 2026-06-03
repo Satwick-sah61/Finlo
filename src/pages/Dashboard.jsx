@@ -18,6 +18,7 @@ import NetWorthChart from '../components/charts/NetWorthChart.jsx'
 import SurplusAllocationChart, { SurplusAllocationToggle } from '../components/charts/SurplusAllocationChart.jsx'
 import DashboardInsights from '../components/DashboardInsights.jsx'
 import ReportModal from '../components/ReportModal.jsx'
+import FrameworkDashboardWidget from '../components/framework/FrameworkDashboardWidget.jsx'
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
 
@@ -227,8 +228,8 @@ export default function Dashboard() {
   const { range } = useDashboardStore()
   const numMonths = rangeToNumMonths(range)
 
-  const { incomeStreams, summary, monthlyHistory, loading, error, refresh } = useFinancials(month, numMonths)
-  const { goals } = useGoals()
+  const { incomeStreams, expenses, summary, monthlyHistory, loading, error, refresh } = useFinancials(month, numMonths)
+  const { goals, totalMonthlyCommitment: goalsMonthlyCommitment } = useGoals()
   const { activeLoans, totalOutstandingPaise, totalMonthlyEMI } = useLoans()
   const [lastUpdated, setLastUpdated] = useState(null)
   const [showReport, setShowReport] = useState(false)
@@ -548,6 +549,16 @@ export default function Dashboard() {
       )}
 
       {/* ── Report Modal ────────────────────────────────────────────────── */}
+      {/* ── Framework widget (only if user has selected one) ─────────────── */}
+      {!loading && summary?.totalMonthlyIncomePaise > 0 && (
+        <FrameworkDashboardWidget
+          incomePaise={summary.totalMonthlyIncomePaise}
+          expenses={expenses}
+          goalsMonthlyCommitment={goalsMonthlyCommitment || 0}
+          loansMonthlyEMI={totalMonthlyEMI || 0}
+        />
+      )}
+
       {showReport && (
         <ReportModal
           summary={mergedSummary}

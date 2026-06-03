@@ -16,6 +16,7 @@ import Investments from './pages/Investments.jsx'
 import AiChat from './pages/AiChat.jsx'
 import Settings from './pages/Settings.jsx'
 import WhatIf from './pages/WhatIf.jsx'
+import SalaryFramework from './pages/SalaryFramework.jsx'
 
 function AutoLockWatcher() {
   useAutoLock()
@@ -66,6 +67,7 @@ function AppGate() {
           <Route path="/goals" element={<Goals />} />
           <Route path="/loans" element={<Loans />} />
           <Route path="/investments" element={<Investments />} />
+          <Route path="/salary-planner" element={<SalaryFramework />} />
           <Route path="/ai" element={<AiChat />} />
           <Route path="/whatif" element={<WhatIf />} />
           <Route path="/settings" element={<Settings />} />

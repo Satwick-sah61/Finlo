@@ -1,28 +1,32 @@
 /**
- * Investments page — Phase 3 Week 12
+ * Investments page — Phase 3 Week 13 (updated)
  *
- * Layout:
- *   Summary bar (total invested, current value, gain/loss, best/worst)
- *   Filter tabs + sort control
- *   Investment cards grid
- *   Asset allocation chart + portfolio value chart (side by side on desktop)
+ * Additions over Week 12:
+ *   - Investment reminder banners (FD maturing, price update needed, PPF March)
+ *   - InvestmentDetail extracted to its own file (enhanced: price chart, FD countdown, PPF table)
+ *   - BenchmarkComparison chart (week 13)
+ *   - DiversificationChart (sector + risk profile, week 13)
  */
 import { useState, useMemo } from 'react'
-import { format, differenceInDays, differenceInMonths } from 'date-fns'
+import { format } from 'date-fns'
 import {
-  BarChart3, Plus, TrendingUp, TrendingDown,
-  MoreHorizontal, Pencil, Trash2, RefreshCw,
-  ChevronDown, ChevronUp,
+  BarChart3, Plus, RefreshCw,
+  MoreHorizontal, Pencil, Trash2,
+  ChevronDown, ChevronUp, Bell, X,
 } from 'lucide-react'
 import { useInvestments } from '../hooks/useInvestments.js'
 import { useAppStore } from '../store/appStore.js'
 import { deleteRecord } from '../db/helpers.js'
-import { formatINRCompact, formatINRFromPaise } from '../utils/currency.js'
+import { formatINRCompact } from '../utils/currency.js'
+import { generateInvestmentReminders } from '../utils/investmentReminders.js'
 import { ASSET_META } from '../components/investments/AssetAllocationChart.jsx'
 import AddInvestmentModal from '../components/investments/AddInvestmentModal.jsx'
 import UpdatePriceModal from '../components/investments/UpdatePriceModal.jsx'
 import AssetAllocationChart from '../components/investments/AssetAllocationChart.jsx'
 import PortfolioValueChart from '../components/investments/PortfolioValueChart.jsx'
+import BenchmarkComparison from '../components/investments/BenchmarkComparison.jsx'
+import DiversificationChart from '../components/investments/DiversificationChart.jsx'
+import InvestmentDetail from '../components/investments/InvestmentDetail.jsx'
 
 // ─── Filter / sort config ─────────────────────────────────────────────────────
 
@@ -37,11 +41,11 @@ const FILTERS = [
 ]
 
 const SORTS = [
-  { id: 'value',   label: 'Value ↓' },
-  { id: 'gain',    label: 'Gain % ↓' },
-  { id: 'loss',    label: 'Loss % ↑' },
-  { id: 'recent',  label: 'Newest first' },
-  { id: 'class',   label: 'Asset class' },
+  { id: 'value',  label: 'Value ↓' },
+  { id: 'gain',   label: 'Gain % ↓' },
+  { id: 'loss',   label: 'Loss % ↑' },
+  { id: 'recent', label: 'Newest first' },
+  { id: 'class',  label: 'Asset class' },
 ]
 
 // ─── Summary pills ────────────────────────────────────────────────────────────
@@ -59,103 +63,39 @@ function SummaryPill({ label, value, sub, valueColor = 'text-white' }) {
   )
 }
 
-// ─── Investment card detail section (expanded) ────────────────────────────────
+// ─── Reminder banners ─────────────────────────────────────────────────────────
 
-function InvestmentDetail({ inv }) {
-  const meta = ASSET_META[inv.asset_class] || ASSET_META.other
+const URGENCY_STYLE = {
+  high:   { bg: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.25)',   icon: '🔴', textColor: '#FCA5A5' },
+  medium: { bg: 'rgba(234,179,8,0.08)',  border: 'rgba(234,179,8,0.25)',  icon: '🟡', textColor: '#FDE68A' },
+  low:    { bg: 'rgba(99,102,241,0.08)', border: 'rgba(99,102,241,0.25)', icon: '🔵', textColor: '#A5B4FC' },
+}
 
-  const rows = []
-  switch (inv.asset_class) {
-    case 'stocks':
-      rows.push(
-        ['Quantity',         `${(Number(inv.quantity) || 0).toLocaleString('en-IN')} shares`],
-        ['Buy Price',        `₹${((inv.buy_price_paise || 0) / 100).toLocaleString('en-IN')}/share`],
-        ['Current Price',    `₹${((inv.current_price_paise || 0) / 100).toLocaleString('en-IN')}/share`],
-        inv.ticker && ['Ticker', inv.ticker],
-        inv.sector && ['Sector', inv.sector],
-      )
-      break
-    case 'mutual_fund':
-      rows.push(
-        ['Units',       `${(Number(inv.units) || 0).toFixed(3)}`],
-        ['Purchase NAV', `₹${((inv.purchase_nav_paise || 0) / 100).toFixed(2)}`],
-        ['Current NAV',  `₹${((inv.current_nav_paise || 0) / 100).toFixed(2)}`],
-        inv.fund_type && ['Fund Type', inv.fund_type],
-        inv.folio_number && ['Folio', inv.folio_number],
-      )
-      break
-    case 'fd':
-      rows.push(
-        ['Principal',    formatINRCompact(inv.principal_paise || 0)],
-        ['Rate',         `${inv.interest_rate}% p.a.`],
-        ['Tenure',       `${inv.tenure_months} months`],
-        ['Type',         `${inv.interest_type === 'compound' ? 'Compound (Qly)' : 'Simple'}`],
-        ['Payout',       inv.payout_type === 'cumulative' ? 'Cumulative' : 'Monthly'],
-        inv.maturity_date && ['Matures', format(new Date(inv.maturity_date), 'dd MMM yyyy')],
-      )
-      break
-    case 'ppf_nps':
-      rows.push(
-        ['Account Type',     inv.account_type || '—'],
-        ['Annual Contribution', formatINRCompact(inv.annual_contribution_paise || 0)],
-        ['Current Corpus',   formatINRCompact(inv.current_corpus_paise || 0)],
-        ['Expected Return',  `${inv.expected_return_rate || '—'}% p.a.`],
-      )
-      break
-    case 'gold':
-      rows.push(
-        ['Form',            inv.form || '—'],
-        ['Quantity',        `${(Number(inv.quantity_grams) || 0).toFixed(3)}g`],
-        ['Buy Price',       `₹${((inv.buy_price_per_gram_paise || 0) / 100).toLocaleString('en-IN')}/g`],
-        ['Current Price',   `₹${((inv.current_price_per_gram_paise || 0) / 100).toLocaleString('en-IN')}/g`],
-      )
-      break
-    case 'real_estate':
-      rows.push(
-        ['Type',            inv.property_type || '—'],
-        ['Purchase Price',  formatINRCompact(inv.purchase_price_paise || 0)],
-        ['Current Value',   formatINRCompact(inv.current_estimated_value_paise || 0)],
-        inv.rental_income_paise > 0 && ['Monthly Rent', formatINRCompact(inv.rental_income_paise)],
-      )
-      break
-    default: break
-  }
-
-  const validRows = rows.filter(Boolean).filter((r) => r && r[1])
-
+function ReminderBanners({ reminders, onDismiss }) {
+  if (!reminders.length) return null
   return (
-    <div className="space-y-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-      <div className="grid grid-cols-2 gap-1.5">
-        {validRows.map(([label, value]) => (
-          <div key={label}>
-            <p className="text-[10px] text-white/30">{label}</p>
-            <p className="text-xs text-white/60 font-numeric">{value}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Annualized return */}
-      {inv._holding_period_days > 30 && (
-        <div
-          className="rounded-lg px-3 py-2 flex items-center justify-between"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
-        >
-          <span className="text-[10px] text-white/35">Annualized Return (approx.)</span>
-          <span
-            className="text-xs font-bold font-numeric"
-            style={{ color: inv._annualized_return >= 0 ? '#10B981' : '#EF4444' }}
+    <div className="space-y-2">
+      {reminders.map((r) => {
+        const s = URGENCY_STYLE[r.urgency] || URGENCY_STYLE.low
+        return (
+          <div
+            key={r.id}
+            className="flex items-start gap-3 rounded-xl px-4 py-3"
+            style={{ background: s.bg, border: `1px solid ${s.border}` }}
           >
-            {inv._annualized_return >= 0 ? '+' : ''}{inv._annualized_return.toFixed(2)}% p.a.
-          </span>
-        </div>
-      )}
-
-      {/* Price history count */}
-      {Array.isArray(inv.price_history) && inv.price_history.length > 0 && (
-        <p className="text-[10px] text-white/25">
-          {inv.price_history.length} price point{inv.price_history.length !== 1 ? 's' : ''} logged
-        </p>
-      )}
+            <Bell className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: s.textColor }} />
+            <p className="text-xs flex-1 leading-relaxed" style={{ color: s.textColor }}>
+              {r.message}
+            </p>
+            <button
+              onClick={() => onDismiss(r.id)}
+              className="flex-shrink-0 text-white/20 hover:text-white/50 transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -165,20 +105,18 @@ function InvestmentDetail({ inv }) {
 function InvestmentCard({ inv, onRefresh, onEdit, onUpdatePrice }) {
   const cryptoKey = useAppStore((s) => s.cryptoKey)
   const meta      = ASSET_META[inv.asset_class] || ASSET_META.other
-  const [expanded,  setExpanded]  = useState(false)
-  const [menuOpen,  setMenuOpen]  = useState(false)
-  const [deleting,  setDeleting]  = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
-  const isGain = inv._gain_loss_paise >= 0
+  const isGain         = inv._gain_loss_paise >= 0
   const canUpdatePrice = ['stocks', 'mutual_fund', 'gold'].includes(inv.asset_class)
 
-  // Holding period display
-  const holdingDays   = inv._holding_period_days
-  const holdingStr    = holdingDays >= 365
-    ? `${Math.floor(holdingDays / 365)}y ${Math.floor((holdingDays % 365) / 30)}m`
-    : holdingDays >= 30
-      ? `${Math.floor(holdingDays / 30)}m`
-      : `${holdingDays}d`
+  const holdingDays = inv._holding_period_days
+  const holdingStr  =
+    holdingDays >= 365 ? `${Math.floor(holdingDays / 365)}y ${Math.floor((holdingDays % 365) / 30)}m`
+    : holdingDays >= 30 ? `${Math.floor(holdingDays / 30)}m`
+    : `${holdingDays}d`
 
   async function handleDelete() {
     if (!window.confirm(`Delete "${inv._name}"? This cannot be undone.`)) return
@@ -337,7 +275,7 @@ function InvestmentCard({ inv, onRefresh, onEdit, onUpdatePrice }) {
       {/* Expanded detail */}
       {expanded && (
         <div className="px-5 pb-5">
-          <InvestmentDetail inv={inv} />
+          <InvestmentDetail inv={inv} onUpdatePrice={onUpdatePrice} />
         </div>
       )}
     </div>
@@ -350,6 +288,23 @@ function Skeleton({ className = '' }) {
   return <div className={`animate-pulse bg-white/6 rounded-xl ${className}`} />
 }
 
+// ─── Chart section wrapper ────────────────────────────────────────────────────
+
+function ChartCard({ title, subtitle, children }) {
+  return (
+    <div
+      className="rounded-2xl p-5 space-y-4"
+      style={{ background: '#1C1B29', border: '1px solid rgba(255,255,255,0.08)' }}
+    >
+      <div>
+        <p className="text-sm font-semibold text-white">{title}</p>
+        {subtitle && <p className="text-xs text-white/35 mt-0.5">{subtitle}</p>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Investments() {
@@ -357,6 +312,8 @@ export default function Investments() {
     enrichedInvestments,
     totalInvested, currentValue, totalGainLoss, totalGainLossPct,
     bestPerformer, worstPerformer, assetAllocation,
+    sectorAllocation, portfolioRiskLabel, highRiskPct,
+    totalAnnualizedReturn,
     loading, error, refresh,
   } = useInvestments()
 
@@ -366,6 +323,20 @@ export default function Investments() {
   const [editInv,     setEditInv]     = useState(null)
   const [updateInv,   setUpdateInv]   = useState(null)
   const [showCharts,  setShowCharts]  = useState(true)
+
+  // Dismissed reminder IDs (session-only)
+  const [dismissed, setDismissed] = useState(new Set())
+
+  // Generate reminders
+  const allReminders = useMemo(
+    () => (!loading && enrichedInvestments.length ? generateInvestmentReminders(enrichedInvestments) : []),
+    [enrichedInvestments, loading]
+  )
+  const visibleReminders = allReminders.filter((r) => !dismissed.has(r.id))
+
+  function dismissReminder(id) {
+    setDismissed((prev) => new Set([...prev, id]))
+  }
 
   const displayed = useMemo(() => {
     let list = filter === 'all'
@@ -377,22 +348,27 @@ export default function Investments() {
       if (sort === 'gain')   return b._gain_loss_pct - a._gain_loss_pct
       if (sort === 'loss')   return a._gain_loss_pct - b._gain_loss_pct
       if (sort === 'recent') {
-        const da = a._buy_date_str ? new Date(a._buy_date_str) : new Date(0)
+        const da  = a._buy_date_str ? new Date(a._buy_date_str) : new Date(0)
         const db_ = b._buy_date_str ? new Date(b._buy_date_str) : new Date(0)
         return db_ - da
       }
-      if (sort === 'class')  return (a.asset_class || '').localeCompare(b.asset_class || '')
+      if (sort === 'class') return (a.asset_class || '').localeCompare(b.asset_class || '')
       return 0
     })
   }, [enrichedInvestments, filter, sort])
 
-  const isGain     = totalGainLoss >= 0
-  const hasData    = enrichedInvestments.length > 0
+  const isGain  = totalGainLoss >= 0
+  const hasData = enrichedInvestments.length > 0
+
+  // Does any eligible holding have price history to compute benchmark?
+  const hasBenchmarkHistory = enrichedInvestments.some(
+    (i) => i._holding_period_days > 30 && i._invested_paise > 0
+  )
 
   return (
     <div className="space-y-6">
 
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* ── Header ────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <BarChart3 className="w-5 h-5 text-indigo-400" />
@@ -430,7 +406,12 @@ export default function Investments() {
         </div>
       </div>
 
-      {/* ── Error ────────────────────────────────────────────────────────── */}
+      {/* ── Reminders ─────────────────────────────────────────────────────── */}
+      {!loading && visibleReminders.length > 0 && (
+        <ReminderBanners reminders={visibleReminders} onDismiss={dismissReminder} />
+      )}
+
+      {/* ── Error ─────────────────────────────────────────────────────────── */}
       {error && (
         <div className="text-center py-12 space-y-2">
           <p className="text-sm text-red-400">Failed to load investments</p>
@@ -531,29 +512,48 @@ export default function Investments() {
 
       {/* ── Charts ────────────────────────────────────────────────────────── */}
       {!loading && hasData && showCharts && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <div
-            className="rounded-2xl p-5 space-y-4"
-            style={{ background: '#1C1B29', border: '1px solid rgba(255,255,255,0.08)' }}
-          >
-            <div>
-              <p className="text-sm font-semibold text-white">Asset Allocation</p>
-              <p className="text-xs text-white/35 mt-0.5">Distribution of your portfolio by asset class</p>
-            </div>
-            <AssetAllocationChart assetAllocation={assetAllocation} currentValue={currentValue} />
+        <div className="space-y-5">
+          {/* Row 1 — Allocation + Value over time */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <ChartCard
+              title="Asset Allocation"
+              subtitle="Distribution of your portfolio by asset class"
+            >
+              <AssetAllocationChart assetAllocation={assetAllocation} currentValue={currentValue} />
+            </ChartCard>
+
+            <ChartCard
+              title="Portfolio Value Over Time"
+              subtitle="Invested capital vs estimated market value"
+            >
+              <PortfolioValueChart enrichedInvestments={enrichedInvestments} />
+            </ChartCard>
           </div>
 
-          <div
-            className="rounded-2xl p-5 space-y-4"
-            style={{ background: '#1C1B29', border: '1px solid rgba(255,255,255,0.08)' }}
-          >
-            <div>
-              <p className="text-sm font-semibold text-white">Portfolio Value Over Time</p>
-              <p className="text-xs text-white/35 mt-0.5">
-                Invested capital vs estimated market value
-              </p>
-            </div>
-            <PortfolioValueChart enrichedInvestments={enrichedInvestments} />
+          {/* Row 2 — Benchmark + Diversification */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <ChartCard
+              title="Benchmark Comparison"
+              subtitle="Your annualized return vs approximate historical benchmarks"
+            >
+              <BenchmarkComparison
+                totalAnnualizedReturn={totalAnnualizedReturn}
+                hasHistory={hasBenchmarkHistory}
+              />
+            </ChartCard>
+
+            <ChartCard
+              title="Diversification & Risk"
+              subtitle="Sector concentration and risk profile of your portfolio"
+            >
+              <DiversificationChart
+                sectorAllocation={sectorAllocation}
+                assetAllocation={assetAllocation}
+                portfolioRiskLabel={portfolioRiskLabel}
+                highRiskPct={highRiskPct}
+                enrichedInvestments={enrichedInvestments}
+              />
+            </ChartCard>
           </div>
         </div>
       )}
@@ -578,9 +578,7 @@ export default function Investments() {
                   }`}
                 >
                   {f.label}
-                  {count > 0 && (
-                    <span className="ml-1 text-[9px] opacity-60">{count}</span>
-                  )}
+                  {count > 0 && <span className="ml-1 text-[9px] opacity-60">{count}</span>}
                 </button>
               )
             })}
@@ -611,7 +609,7 @@ export default function Investments() {
         </div>
       )}
 
-      {/* ── No results for active filter ──────────────────────────────────── */}
+      {/* ── No results for filter ──────────────────────────────────────────── */}
       {!loading && hasData && displayed.length === 0 && (
         <div className="text-center py-10">
           <p className="text-sm text-white/30">No {FILTERS.find((f) => f.id === filter)?.label} investments</p>

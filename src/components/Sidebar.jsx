@@ -1,19 +1,20 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, TrendingUp, ShoppingCart, Target,
-  CreditCard, BarChart3, MessageSquare, Sliders, Lock, Shield, Settings,
+  CreditCard, BarChart3, MessageSquare, Sliders, Lock, Shield, Settings, Wallet,
 } from 'lucide-react'
 import { useAppStore } from '../store/appStore.js'
 
 const NAV = [
-  { to: '/dashboard',   icon: LayoutDashboard, label: 'Dashboard'   },
-  { to: '/income',      icon: TrendingUp,       label: 'Income'      },
-  { to: '/expenses',    icon: ShoppingCart,     label: 'Expenses'    },
-  { to: '/goals',       icon: Target,           label: 'Goals'       },
-  { to: '/loans',       icon: CreditCard,       label: 'Loans'       },
-  { to: '/investments', icon: BarChart3,        label: 'Investments' },
-  { to: '/whatif',      icon: Sliders,          label: 'What-If'     },
-  { to: '/ai',          icon: MessageSquare,    label: 'AI Advisor'  },
+  { to: '/dashboard',      icon: LayoutDashboard, label: 'Dashboard'      },
+  { to: '/salary-planner', icon: Wallet,           label: 'Salary Planner' },
+  { to: '/income',         icon: TrendingUp,       label: 'Income'         },
+  { to: '/expenses',       icon: ShoppingCart,     label: 'Expenses'       },
+  { to: '/goals',          icon: Target,           label: 'Goals'          },
+  { to: '/loans',          icon: CreditCard,       label: 'Loans'          },
+  { to: '/investments',    icon: BarChart3,        label: 'Investments'    },
+  { to: '/whatif',         icon: Sliders,          label: 'What-If'        },
+  { to: '/ai',             icon: MessageSquare,    label: 'AI Advisor'     },
 ]
 
 export default function Sidebar({ collapsed, onClose }) {
