@@ -9,12 +9,68 @@
  *   onSaved       () => void
  *   editInvestment  enriched investment object | null
  */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useCallback } from 'react'
 import { addMonths, format } from 'date-fns'
-import { X, ArrowLeft, ChevronRight } from 'lucide-react'
+import { X, ArrowLeft, ChevronRight, Check, AlertCircle, Loader2 } from 'lucide-react'
 import { useAppStore } from '../../store/appStore.js'
 import { encryptAndSave, encryptAndUpdate } from '../../db/helpers.js'
 import { computeFDMaturityValue } from '../../hooks/useInvestments.js'
+import { fetchStockPrice, fetchMFNav, normalizeTicker } from '../../ai/livePrices.js'
+
+// ─── Live symbol/scheme validator ────────────────────────────────────────────
+// status: 'idle' | 'checking' | 'ok' | 'fail'
+
+function useSymbolValidator(fetcher) {
+  const [status, setStatus] = useState('idle')
+  const [message, setMessage] = useState('')
+  const reqId = useRef(0)
+
+  const validate = useCallback(async (raw) => {
+    const value = String(raw || '').trim()
+    if (!value) { setStatus('idle'); setMessage(''); return }
+
+    const id = ++reqId.current
+    setStatus('checking'); setMessage('')
+
+    const result = await fetcher(value)
+    if (id !== reqId.current) return // a newer check superseded this one
+
+    if (result == null) {
+      setStatus('fail')
+      setMessage('Not found — you can still save and update manually')
+    } else {
+      setStatus('ok')
+      setMessage(result.label)
+    }
+  }, [fetcher])
+
+  const reset = useCallback(() => { setStatus('idle'); setMessage('') }, [])
+
+  return { status, message, validate, reset }
+}
+
+function ValidationLine({ status, message }) {
+  if (status === 'idle') return null
+  if (status === 'checking') {
+    return (
+      <p className="text-[10px] text-white/40 mt-1 flex items-center gap-1">
+        <Loader2 className="w-2.5 h-2.5 animate-spin" /> Checking…
+      </p>
+    )
+  }
+  if (status === 'ok') {
+    return (
+      <p className="text-[10px] mt-1 flex items-center gap-1" style={{ color: '#6EE7B7' }}>
+        <Check className="w-2.5 h-2.5" /> {message}
+      </p>
+    )
+  }
+  return (
+    <p className="text-[10px] mt-1 flex items-center gap-1" style={{ color: '#FCA5A5' }}>
+      <AlertCircle className="w-2.5 h-2.5" /> {message}
+    </p>
+  )
+}
 
 // ─── Asset class catalogue ────────────────────────────────────────────────────
 
@@ -143,6 +199,12 @@ function PreviewPill({ label, value, color }) {
 // ─── Per-class form sections ──────────────────────────────────────────────────
 
 function StocksForm({ data, onChange }) {
+  const tickerCheck = useSymbolValidator(async (ticker) => {
+    const paise = await fetchStockPrice(ticker)
+    if (paise == null) return null
+    return { label: `${normalizeTicker(ticker)} found — ₹${(paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` }
+  })
+
   return (
     <div className="space-y-4">
       <Row>
@@ -157,11 +219,15 @@ function StocksForm({ data, onChange }) {
           <Input
             placeholder="e.g. TCS, INFY, RELIANCE"
             value={data.ticker || ''}
-            onChange={(e) => onChange('ticker', e.target.value.toUpperCase())}
+            onChange={(e) => { onChange('ticker', e.target.value.toUpperCase()); tickerCheck.reset() }}
+            onBlur={(e) => tickerCheck.validate(e.target.value)}
           />
-          <p className="text-[10px] text-white/25 mt-1">
-            Enter the NSE ticker (.NS is added automatically) — leave blank to update price manually
-          </p>
+          {tickerCheck.status === 'idle' && (
+            <p className="text-[10px] text-white/25 mt-1">
+              Enter the NSE ticker (.NS is added automatically) — leave blank to update price manually
+            </p>
+          )}
+          <ValidationLine status={tickerCheck.status} message={tickerCheck.message} />
         </Field>
       </Row>
       <Field label="Sector">
@@ -237,6 +303,12 @@ function StocksForm({ data, onChange }) {
 }
 
 function MutualFundForm({ data, onChange }) {
+  const schemeCheck = useSymbolValidator(async (code) => {
+    const paise = await fetchMFNav(code)
+    if (paise == null) return null
+    return { label: `Scheme found — NAV ₹${(paise / 100).toFixed(4)}` }
+  })
+
   return (
     <div className="space-y-4">
       <Field label="Fund Name" required>
@@ -308,11 +380,15 @@ function MutualFundForm({ data, onChange }) {
         <Input
           placeholder="e.g. 120503"
           value={data.scheme_code || ''}
-          onChange={(e) => onChange('scheme_code', e.target.value.replace(/\D/g, ''))}
+          onChange={(e) => { onChange('scheme_code', e.target.value.replace(/\D/g, '')); schemeCheck.reset() }}
+          onBlur={(e) => schemeCheck.validate(e.target.value)}
         />
-        <p className="text-[10px] text-white/25 mt-1">
-          Find your scheme code at <span className="text-indigo-400">mfapi.in</span> — leave blank to update NAV manually
-        </p>
+        {schemeCheck.status === 'idle' && (
+          <p className="text-[10px] text-white/25 mt-1">
+            Find your scheme code at <span className="text-indigo-400">mfapi.in</span> — leave blank to update NAV manually
+          </p>
+        )}
+        <ValidationLine status={schemeCheck.status} message={schemeCheck.message} />
       </Field>
       {data.units && data.purchase_nav && data.current_nav && (
         <div className="flex gap-3">

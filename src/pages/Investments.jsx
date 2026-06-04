@@ -12,7 +12,7 @@ import { format } from 'date-fns'
 import {
   BarChart3, Plus, RefreshCw,
   MoreHorizontal, Pencil, Trash2,
-  ChevronDown, ChevronUp, Bell, X, Download,
+  ChevronDown, ChevronUp, Bell, X, Download, Loader2,
 } from 'lucide-react'
 import { useInvestments } from '../hooks/useInvestments.js'
 import { useAppStore } from '../store/appStore.js'
@@ -56,18 +56,117 @@ const SORTS = [
   { id: 'class',  label: 'Asset class' },
 ]
 
+// ─── Sparkline (tiny inline SVG, no chart library) ────────────────────────────
+
+function Sparkline({ data = [], color = '#6366F1', width = 64, height = 20 }) {
+  if (!Array.isArray(data) || data.length < 2) return null
+
+  const min = Math.min(...data)
+  const max = Math.max(...data)
+  const range = max - min || 1
+  const stepX = width / (data.length - 1)
+
+  // Build the polyline path (y inverted — SVG origin is top-left)
+  const points = data.map((v, i) => {
+    const x = i * stepX
+    const y = height - ((v - min) / range) * (height - 2) - 1
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  })
+  const linePath = `M ${points.join(' L ')}`
+  // Area path (close to the bottom)
+  const areaPath = `${linePath} L ${width},${height} L 0,${height} Z`
+
+  const gradId = `spark-${color.replace('#', '')}`
+
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="flex-shrink-0">
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"  stopColor={color} stopOpacity={0.25} />
+          <stop offset="100%" stopColor={color} stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill={`url(#${gradId})`} />
+      <path d={linePath} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 // ─── Summary pills ────────────────────────────────────────────────────────────
 
-function SummaryPill({ label, value, sub, valueColor = 'text-white' }) {
+function SummaryPill({ label, value, sub, valueColor = 'text-white', spark, sparkColor = '#6366F1' }) {
   return (
     <div
       className="flex-1 min-w-[140px] rounded-2xl p-4"
       style={{ background: '#1C1B29', border: '1px solid rgba(255,255,255,0.08)' }}
     >
-      <p className="text-[10px] text-white/35 uppercase tracking-wider mb-2">{label}</p>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[10px] text-white/35 uppercase tracking-wider mb-2">{label}</p>
+        {spark && spark.length >= 2 && <Sparkline data={spark} color={sparkColor} />}
+      </div>
       <p className={`text-xl font-bold font-numeric leading-tight ${valueColor}`}>{value}</p>
       {sub && <p className="text-[10px] text-white/30 mt-0.5">{sub}</p>}
     </div>
+  )
+}
+
+// ─── Live price helpers ───────────────────────────────────────────────────────
+
+// True if this holding can fetch a live price automatically.
+function isAutoCapable(inv) {
+  if (inv.asset_class === 'stocks')      return !!inv.ticker
+  if (inv.asset_class === 'mutual_fund') return !!inv.scheme_code
+  if (inv.asset_class === 'gold')        return !!inv.use_live_price
+  return false
+}
+
+// Price-trackable classes that *could* have a live price (for the Manual tag).
+function isPriceTrackable(inv) {
+  return ['stocks', 'mutual_fund', 'gold'].includes(inv.asset_class)
+}
+
+function LivePriceBadge({ inv, livePricePaise, fetching }) {
+  if (!isPriceTrackable(inv)) return null
+
+  const auto = isAutoCapable(inv)
+
+  // Fetching state (only meaningful for auto-capable holdings)
+  if (fetching && auto) {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-white/8 text-white/50">
+        <Loader2 className="w-2.5 h-2.5 animate-spin" />
+        Live
+      </span>
+    )
+  }
+
+  // Successfully fetched live price this session
+  if (auto && livePricePaise != null) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold"
+        style={{ background: 'rgba(16,185,129,0.12)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.25)' }}
+      >
+        <span className="w-1 h-1 rounded-full bg-emerald-400" />
+        Live ₹{(livePricePaise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+      </span>
+    )
+  }
+
+  // Auto-capable but not yet fetched this session
+  if (auto) {
+    return (
+      <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/8 text-emerald-400/60">
+        Auto
+      </span>
+    )
+  }
+
+  // No ticker/scheme/toggle — manual updates only
+  return (
+    <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-white/6 text-white/35">
+      Manual
+    </span>
   )
 }
 
@@ -119,7 +218,7 @@ function ChartCard({ title, subtitle, children }) {
 
 // ─── Investment card ──────────────────────────────────────────────────────────
 
-function InvestmentCard({ inv, onRefresh, onEdit, onUpdatePrice }) {
+function InvestmentCard({ inv, onRefresh, onEdit, onUpdatePrice, livePricePaise, priceFetching }) {
   const cryptoKey = useAppStore((s) => s.cryptoKey)
   const meta      = ASSET_META[inv.asset_class] || ASSET_META.other
   const [expanded, setExpanded] = useState(false)
@@ -167,6 +266,7 @@ function InvestmentCard({ inv, onRefresh, onEdit, onUpdatePrice }) {
                 {inv.is_sip && (
                   <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-indigo-500/10 text-indigo-400">SIP</span>
                 )}
+                <LivePriceBadge inv={inv} livePricePaise={livePricePaise} fetching={priceFetching} />
                 {holdingDays > 0 && (
                   <span className="text-[10px] text-white/30">{holdingStr} held</span>
                 )}
@@ -355,12 +455,23 @@ export default function Investments() {
   const [dismissed,     setDismissed]     = useState(new Set())
 
   // Live price fetching (stocks/MF/gold) with 60-min session gate
-  const { fetching: pricesFetching, canRefresh, lastFetched, refresh: refreshPrices } = useLivePrices()
+  const { fetching: pricesFetching, canRefresh, lastFetched, refresh: refreshPrices, prices: livePriceMap } = useLivePrices()
 
   async function handleRefreshPrices() {
     await refreshPrices(enrichedInvestments, true) // force = manual click
     refresh() // reload investments from DB to show new prices
   }
+
+  // Sparkline series — last 6 monthly snapshots of the portfolio
+  const sparkSeries = useMemo(() => {
+    const points = buildChartData(enrichedInvestments)
+    const last6  = points.slice(-6)
+    return {
+      invested: last6.map((p) => p.invested),
+      value:    last6.map((p) => p.value),
+      gain:     last6.map((p) => p.value - p.invested),
+    }
+  }, [enrichedInvestments])
 
   // "Updated X mins ago" label
   const lastFetchedLabel = lastFetched
@@ -563,13 +674,28 @@ export default function Investments() {
       {/* ── Summary bar ───────────────────────────────────────────────────── */}
       {!loading && hasData && (
         <div className="flex flex-wrap gap-3">
-          <SummaryPill label="Total Invested" value={formatINRCompact(totalInvested)} sub={`${enrichedInvestments.length} holdings`} valueColor="text-indigo-300" />
-          <SummaryPill label="Current Value"  value={formatINRCompact(currentValue)}  sub={isGain ? 'Portfolio is up' : 'Portfolio is down'} />
+          <SummaryPill
+            label="Total Invested"
+            value={formatINRCompact(totalInvested)}
+            sub={`${enrichedInvestments.length} holdings`}
+            valueColor="text-indigo-300"
+            spark={sparkSeries.invested}
+            sparkColor="#6366F1"
+          />
+          <SummaryPill
+            label="Current Value"
+            value={formatINRCompact(currentValue)}
+            sub={isGain ? 'Portfolio is up' : 'Portfolio is down'}
+            spark={sparkSeries.value}
+            sparkColor={isGain ? '#10B981' : '#EF4444'}
+          />
           <SummaryPill
             label={isGain ? 'Total Gain' : 'Total Loss'}
             value={`${isGain ? '+' : '−'}${formatINRCompact(Math.abs(totalGainLoss))}`}
             sub={`${isGain ? '+' : ''}${totalGainLossPct.toFixed(2)}% overall`}
             valueColor={isGain ? 'text-emerald-400' : 'text-red-400'}
+            spark={sparkSeries.gain}
+            sparkColor={isGain ? '#10B981' : '#EF4444'}
           />
           {bestPerformer && (
             <SummaryPill label="Best Performer"  value={bestPerformer._name}  sub={`+${bestPerformer._gain_loss_pct.toFixed(2)}%`}  valueColor="text-emerald-400" />
@@ -676,7 +802,15 @@ export default function Investments() {
       {!loading && filter !== 'sip' && displayed.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {displayed.map((inv) => (
-            <InvestmentCard key={inv.id} inv={inv} onRefresh={refresh} onEdit={(i) => setEditInv(i)} onUpdatePrice={(i) => setUpdateInv(i)} />
+            <InvestmentCard
+              key={inv.id}
+              inv={inv}
+              onRefresh={refresh}
+              onEdit={(i) => setEditInv(i)}
+              onUpdatePrice={(i) => setUpdateInv(i)}
+              livePricePaise={livePriceMap[inv.id]}
+              priceFetching={pricesFetching}
+            />
           ))}
         </div>
       )}
