@@ -55,7 +55,8 @@ export function useQuickLog() {
     if (!cryptoKey) throw new Error('Vault locked')
     if (!amountPaise || amountPaise <= 0) throw new Error('Amount must be positive')
 
-    const result = await encryptAndSave(
+    // encryptAndSave fires the DATA_CHANGED event centrally (db/helpers.js)
+    return encryptAndSave(
       'expense_logs',
       {
         amount:     amountPaise,
@@ -68,9 +69,6 @@ export function useQuickLog() {
       cryptoKey,
       ['date', 'category'],     // plaintext for Dexie index queries
     )
-    // DATA_CHANGED — keep the AI context fresh
-    useAppStore.getState().notifyDataChanged()
-    return result
   }, [cryptoKey])
 
   /**

@@ -31,6 +31,8 @@ export function useFinancials(month = currentMonth(), numMonths = 6) {
   const saveBudgets = useCallback(async (newBudgets) => {
     setBudgets(newBudgets)
     await configSet('expense_budgets', JSON.stringify(newBudgets))
+    // configSet bypasses db/helpers, so fire DATA_CHANGED explicitly
+    useAppStore.getState().notifyDataChanged()
   }, [])
 
   useEffect(() => {

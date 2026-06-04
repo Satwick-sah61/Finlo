@@ -9,9 +9,16 @@
 
 import { encryptData, decryptData } from '../crypto/vault.js'
 import { db } from './schema.js'
+import { useAppStore } from '../store/appStore.js'
 
 // Fields that are never encrypted regardless of table
 const ALWAYS_PLAIN = new Set(['id', 'created_at', 'month'])
+
+// DATA_CHANGED — every encrypted write funnels through here, so the AI context
+// (useFinioContext) rebuilds automatically. Guarded so it never breaks a write.
+function notifyDataChanged() {
+  try { useAppStore.getState().notifyDataChanged() } catch { /* store not ready — ignore */ }
+}
 
 async function encryptField(cryptoKey, value) {
   if (value === null || value === undefined) return null
@@ -61,7 +68,9 @@ export async function encryptAndSave(table, record, cryptoKey, extraPlain = []) 
     }
   }
 
-  return db[table].add(row)
+  const id = await db[table].add(row)
+  notifyDataChanged()
+  return id
 }
 
 // Update specific fields on an existing record.
@@ -77,7 +86,9 @@ export async function encryptAndUpdate(table, id, updates, cryptoKey, extraPlain
     }
   }
 
-  return db[table].update(id, patch)
+  const result = await db[table].update(id, patch)
+  notifyDataChanged()
+  return result
 }
 
 // Read and decrypt a single record. Returns null if not found.
@@ -122,7 +133,9 @@ export async function decryptAndLoadAll(table, cryptoKey, filter = {}) {
 
 // Hard delete — no soft delete, no archive
 export async function deleteRecord(table, id) {
-  return db[table].delete(id)
+  const result = await db[table].delete(id)
+  notifyDataChanged()
+  return result
 }
 
 export async function countRecords(table) {
