@@ -119,7 +119,7 @@ function MoMBadge({ delta, unit = '' }) {
 
 // ─── Stat card with count-up ──────────────────────────────────────────────────
 
-function StatCard({ label, rawValue, displayValue, sub, valueColor = 'text-white', mom, momUnit, animate }) {
+function StatCard({ label, rawValue, displayValue, sub, valueColor = 'text-white', mom, momUnit, animate, badge }) {
   const animated = useCountUp(animate ? (rawValue ?? 0) : 0)
   const shown = animate && rawValue != null
     ? displayValue?.replace(/[\d,]+/, formatINRCompact(animated)) ?? displayValue
@@ -127,7 +127,18 @@ function StatCard({ label, rawValue, displayValue, sub, valueColor = 'text-white
 
   return (
     <div className="glass rounded-xl p-5 space-y-1.5 transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/30">
-      <p className="text-xs text-white/40 uppercase tracking-wider">{label}</p>
+      <div className="flex items-center gap-2">
+        <p className="text-xs text-white/40 uppercase tracking-wider">{label}</p>
+        {badge && (
+          <span
+            className="text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full"
+            style={{ background: 'rgba(148,163,184,0.15)', color: '#94A3B8' }}
+            title="Estimated from baseline data — no confirmed transactions yet this month"
+          >
+            {badge}
+          </span>
+        )}
+      </div>
       <p className={`text-2xl font-bold font-numeric leading-tight ${valueColor}`}>{shown}</p>
       <div className="flex items-center gap-2 flex-wrap">
         {sub && <p className="text-xs text-white/30">{sub}</p>}
@@ -295,7 +306,17 @@ export default function Dashboard() {
     totalGainLoss: invGainLoss, totalGainLossPct: invGainLossPct,
     loading: invLoading,
   } = useInvestments()
-  const { pendingCount } = useTransactions(month)
+  const {
+    pendingCount,
+    transactions: monthTxns,
+    income:    txnIncome,
+    committed: txnCommitted,
+    spent:     txnSpent,
+    surplus:   txnSurplus,
+  } = useTransactions(month)
+  // Use transaction data as the source for the current month once any exist;
+  // otherwise fall back to baseline estimates (labelled "Estimated").
+  const hasTxns = monthTxns.length > 0
   const [lastUpdated, setLastUpdated] = useState(null)
   const [showReport, setShowReport] = useState(false)
   const [surplusChartType, setSurplusChartType] = useState('donut')
@@ -478,22 +499,56 @@ export default function Dashboard() {
             momUnit="%"
             animate={totalMonthlyExpensesPaise > 0}
           />
-          <StatCard
-            label="Free Monthly Surplus"
-            rawValue={Math.abs(effectiveSurplusPaise)}
-            displayValue={totalMonthlyIncomePaise > 0 ? formatINRFromPaise(Math.abs(effectiveSurplusPaise)) : '—'}
-            sub={
-              totalMonthlyIncomePaise === 0 ? undefined
-              : effectiveSurplusPaise < 0 ? `${formatINRCompact(Math.abs(effectiveSurplusPaise))} over budget`
-              : goalAllocatedPaise > 0 ? `after ${formatINRCompact(goalAllocatedPaise)}/mo to ${goals.filter(g => (Number(g.saved_amount)||0) < (Number(g.target_amount)||0) && g.status !== 'Completed').length} goal${goals.filter(g => (Number(g.saved_amount)||0) < (Number(g.target_amount)||0) && g.status !== 'Completed').length !== 1 ? 's' : ''}`
-              : surplusPaise > 0 ? 'No active goals yet' : 'Deficit this month'
+          {(() => {
+            // ── Step 1: Surplus card sourced from transactions when available ──
+            if (hasTxns) {
+              const nothingYet = txnIncome === 0 && txnCommitted === 0
+              if (nothingYet) {
+                return (
+                  <StatCard
+                    label="Free Monthly Surplus"
+                    displayValue="—"
+                    sub="No transactions confirmed yet this month"
+                    valueColor="text-white/20"
+                  />
+                )
+              }
+              return (
+                <StatCard
+                  label="Free Monthly Surplus"
+                  rawValue={Math.abs(txnSurplus)}
+                  displayValue={formatINRFromPaise(Math.abs(txnSurplus))}
+                  sub={
+                    txnSurplus < 0
+                      ? `${formatINRCompact(Math.abs(txnSurplus))} over committed`
+                      : `free after ${formatINRCompact(txnCommitted)}/mo committed`
+                  }
+                  valueColor={txnSurplus >= 0 ? 'text-green-400' : 'text-red-400'}
+                  animate
+                />
+              )
             }
-            valueColor={
-              totalMonthlyIncomePaise === 0 ? 'text-white/20'
-              : effectiveSurplusPaise >= 0 ? 'text-green-400' : 'text-red-400'
-            }
-            animate={totalMonthlyIncomePaise > 0}
-          />
+            // ── Fallback: baseline estimate, labelled "Estimated" ──
+            return (
+              <StatCard
+                label="Free Monthly Surplus"
+                badge="Estimated"
+                rawValue={Math.abs(effectiveSurplusPaise)}
+                displayValue={totalMonthlyIncomePaise > 0 ? formatINRFromPaise(Math.abs(effectiveSurplusPaise)) : '—'}
+                sub={
+                  totalMonthlyIncomePaise === 0 ? undefined
+                  : effectiveSurplusPaise < 0 ? `${formatINRCompact(Math.abs(effectiveSurplusPaise))} over budget`
+                  : goalAllocatedPaise > 0 ? `after ${formatINRCompact(goalAllocatedPaise)}/mo to ${goals.filter(g => (Number(g.saved_amount)||0) < (Number(g.target_amount)||0) && g.status !== 'Completed').length} goal${goals.filter(g => (Number(g.saved_amount)||0) < (Number(g.target_amount)||0) && g.status !== 'Completed').length !== 1 ? 's' : ''}`
+                  : surplusPaise > 0 ? 'No active goals yet' : 'Deficit this month'
+                }
+                valueColor={
+                  totalMonthlyIncomePaise === 0 ? 'text-white/20'
+                  : effectiveSurplusPaise >= 0 ? 'text-green-400' : 'text-red-400'
+                }
+                animate={totalMonthlyIncomePaise > 0}
+              />
+            )
+          })()}
           <StatCard
             label="Savings Rate"
             displayValue={totalMonthlyIncomePaise > 0 ? `${savingsRate}%` : '—'}
