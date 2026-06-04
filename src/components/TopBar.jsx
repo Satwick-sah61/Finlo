@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom'
 
 const PAGE_TITLES = {
   '/dashboard':   'Dashboard',
+  '/transactions': 'This Month',
   '/income':      'Income Streams',
   '/expenses':    'Expenses',
   '/goals':       'Goals',

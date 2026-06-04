@@ -17,6 +17,8 @@ import AiChat from './pages/AiChat.jsx'
 import Settings from './pages/Settings.jsx'
 import WhatIf from './pages/WhatIf.jsx'
 import SalaryFramework from './pages/SalaryFramework.jsx'
+import Transactions from './pages/Transactions.jsx'
+import AutoTxnSync from './components/AutoTxnSync.jsx'
 
 function AutoLockWatcher() {
   useAutoLock()
@@ -58,6 +60,7 @@ function AppGate() {
   return (
     <>
       <AutoLockWatcher />
+      <AutoTxnSync />
       <Layout>
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -67,6 +70,7 @@ function AppGate() {
           <Route path="/goals" element={<Goals />} />
           <Route path="/loans" element={<Loans />} />
           <Route path="/investments" element={<Investments />} />
+          <Route path="/transactions" element={<Transactions />} />
           <Route path="/salary-planner" element={<SalaryFramework />} />
           <Route path="/ai" element={<AiChat />} />
           <Route path="/whatif" element={<WhatIf />} />

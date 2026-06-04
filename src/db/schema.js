@@ -69,6 +69,26 @@ db.version(5).stores({
   expense_logs:   '++id, date, category, logged_at',
 })
 
+// v6 — transactions table (the unified money-movement ledger).
+//   Plaintext indexes: date (yyyy-MM-dd), type, status, month (yyyy-MM)
+//   All financial fields (amount, direction, category, reference_id, upi_id,
+//   note) are encrypted.
+// Migration: existing expenses / expense_logs are NOT migrated — they remain
+//   the historical baseline. We only create the empty table and stamp two
+//   app_config flags (baseline_data_migrated, baseline_month) on first open.
+db.version(6).stores({
+  income_streams: '++id, created_at',
+  expenses:       '++id, created_at, month',
+  goals:          '++id, created_at',
+  loans:          '++id, created_at',
+  investments:    '++id, created_at, asset_class',
+  reminders:      '++id, created_at',
+  app_config:     'key',
+  loan_documents: '++id, loan_id, created_at',
+  expense_logs:   '++id, date, category, logged_at',
+  transactions:   '++id, date, type, status, month',
+})
+
 // ─── Legacy blob helpers (used only for config/sentinel — not user data) ──────
 
 function getKey() {
@@ -125,6 +145,17 @@ export async function configSet(key, value) {
 export async function configGet(key) {
   const row = await db.app_config.get(key)
   return row ? row.value : null
+}
+
+// Stamp the baseline flags once, the first time the app opens after the v6
+// migration. Data before `baseline_month` is treated as historical baseline.
+export async function ensureBaselineFlags() {
+  const already = await configGet('baseline_data_migrated')
+  if (already === 'true') return
+  const now = new Date()
+  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  await configSet('baseline_month', month)
+  await configSet('baseline_data_migrated', 'true')
 }
 
 // Permanently wipe the database — used in Settings danger zone

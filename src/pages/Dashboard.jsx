@@ -21,6 +21,8 @@ import ReportModal from '../components/ReportModal.jsx'
 import FrameworkDashboardWidget from '../components/framework/FrameworkDashboardWidget.jsx'
 import { useInvestments } from '../hooks/useInvestments.js'
 import { useTodayLogs, QUICK_CATEGORY_OPTIONS } from '../hooks/useQuickLog.js'
+import { useTransactions } from '../hooks/useTransactions.js'
+import { ArrowLeftRight } from 'lucide-react'
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
 
@@ -293,6 +295,7 @@ export default function Dashboard() {
     totalGainLoss: invGainLoss, totalGainLossPct: invGainLossPct,
     loading: invLoading,
   } = useInvestments()
+  const { pendingCount } = useTransactions(month)
   const [lastUpdated, setLastUpdated] = useState(null)
   const [showReport, setShowReport] = useState(false)
   const [surplusChartType, setSurplusChartType] = useState('donut')
@@ -423,6 +426,28 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+
+      {/* ── Pending confirmations banner ───────────────────────────────── */}
+      {pendingCount > 0 && (
+        <Link
+          to="/transactions"
+          className="flex items-center justify-between gap-3 rounded-2xl px-5 py-3.5 transition-all hover:opacity-90"
+          style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)' }}
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(245,158,11,0.15)' }}>
+              <ArrowLeftRight className="w-4 h-4 text-amber-400" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-amber-300">
+                {pendingCount} transaction{pendingCount !== 1 ? 's' : ''} pending confirmation
+              </p>
+              <p className="text-[11px] text-amber-400/50">Confirm your EMIs, SIPs, and goal contributions for this month</p>
+            </div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-amber-400/60 flex-shrink-0" />
+        </Link>
+      )}
 
       {/* ── Stat cards ─────────────────────────────────────────────────── */}
       {loading ? (

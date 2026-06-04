@@ -2,11 +2,13 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, TrendingUp, ShoppingCart, Target,
   CreditCard, BarChart3, MessageSquare, Sliders, Lock, Shield, Settings, Wallet,
+  ArrowLeftRight,
 } from 'lucide-react'
 import { useAppStore } from '../store/appStore.js'
 
 const NAV = [
   { to: '/dashboard',      icon: LayoutDashboard, label: 'Dashboard'      },
+  { to: '/transactions',   icon: ArrowLeftRight,   label: 'This Month'     },
   { to: '/salary-planner', icon: Wallet,           label: 'Salary Planner' },
   { to: '/income',         icon: TrendingUp,       label: 'Income'         },
   { to: '/expenses',       icon: ShoppingCart,     label: 'Expenses'       },

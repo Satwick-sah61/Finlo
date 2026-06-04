@@ -12,6 +12,7 @@ import { configGet, configSet } from '../../db/schema.js'
 import QuickLogSheet from './QuickLogSheet.jsx'
 import { useTodayLogs } from '../../hooks/useQuickLog.js'
 import { formatINRCompact } from '../../utils/currency.js'
+import { canAccess } from '../../utils/featureFlags.js'
 
 const PULSE_DAYS = 7
 const MS_PER_DAY = 24 * 60 * 60 * 1000
@@ -19,7 +20,13 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000
 export default function QuickLogFAB() {
   const [sheetOpen, setSheetOpen]   = useState(false)
   const [shouldPulse, setShouldPulse] = useState(false)
+  const [allowed, setAllowed]       = useState(true) // premium-gated
   const { logs, total, refresh }    = useTodayLogs()
+
+  // Feature flag: Quick Log FAB requires premium (trial counts during dev)
+  useEffect(() => {
+    canAccess('quick_log_fab').then(setAllowed).catch(() => setAllowed(false))
+  }, [])
 
   // Check pulse eligibility from first_launch timestamp
   useEffect(() => {
@@ -49,6 +56,9 @@ export default function QuickLogFAB() {
     setShouldPulse(false)
     setSheetOpen(true)
   }
+
+  // Premium-gated — hidden entirely for free tier (upgrade hint lives on Expenses)
+  if (!allowed) return null
 
   return (
     <>
