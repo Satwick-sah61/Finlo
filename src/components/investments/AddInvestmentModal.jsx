@@ -153,12 +153,15 @@ function StocksForm({ data, onChange }) {
             onChange={(e) => onChange('name', e.target.value)}
           />
         </Field>
-        <Field label="Ticker Symbol" hint="NSE/BSE code (optional)">
+        <Field label="Ticker Symbol" hint="Enables live price">
           <Input
-            placeholder="e.g. RELIANCE"
+            placeholder="e.g. TCS, INFY, RELIANCE"
             value={data.ticker || ''}
             onChange={(e) => onChange('ticker', e.target.value.toUpperCase())}
           />
+          <p className="text-[10px] text-white/25 mt-1">
+            Enter the NSE ticker (.NS is added automatically) — leave blank to update price manually
+          </p>
         </Field>
       </Row>
       <Field label="Sector">
@@ -301,6 +304,16 @@ function MutualFundForm({ data, onChange }) {
           />
         </Field>
       </Row>
+      <Field label="MFAPI Scheme Code" hint="Optional — enables live NAV">
+        <Input
+          placeholder="e.g. 120503"
+          value={data.scheme_code || ''}
+          onChange={(e) => onChange('scheme_code', e.target.value.replace(/\D/g, ''))}
+        />
+        <p className="text-[10px] text-white/25 mt-1">
+          Find your scheme code at <span className="text-indigo-400">mfapi.in</span> — leave blank to update NAV manually
+        </p>
+      </Field>
       {data.units && data.purchase_nav && data.current_nav && (
         <div className="flex gap-3">
           <PreviewPill
@@ -576,6 +589,32 @@ function GoldForm({ data, onChange }) {
           />
         </Field>
       </Row>
+      {/* Live gold price toggle */}
+      <button
+        type="button"
+        onClick={() => onChange('use_live_price', !data.use_live_price)}
+        className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 transition-all"
+        style={{
+          background: data.use_live_price ? 'rgba(245,158,11,0.1)' : 'rgba(255,255,255,0.04)',
+          border: `1px solid ${data.use_live_price ? 'rgba(245,158,11,0.3)' : 'rgba(255,255,255,0.1)'}`,
+          minHeight: 44,
+        }}
+      >
+        <div className="text-left">
+          <p className="text-sm font-medium text-white/80">Use live gold price</p>
+          <p className="text-[10px] text-white/30">Auto-fetches the 24k rate via GoldAPI (needs key in Settings)</p>
+        </div>
+        <div
+          className="w-10 h-6 rounded-full flex items-center transition-all flex-shrink-0"
+          style={{ background: data.use_live_price ? '#F59E0B' : 'rgba(255,255,255,0.15)', padding: 2 }}
+        >
+          <div
+            className="w-5 h-5 rounded-full bg-white transition-transform"
+            style={{ transform: data.use_live_price ? 'translateX(16px)' : 'translateX(0)' }}
+          />
+        </div>
+      </button>
+
       {invested !== null && current !== null && (
         <div className="flex gap-3">
           <PreviewPill label="Invested" value={`₹${invested.toLocaleString('en-IN')}`} color="#F59E0B" />
@@ -772,6 +811,7 @@ function buildRecord(assetClass, data) {
         current_nav_paise:  currentPaise,
         buy_date:           data.buy_date,
         folio_number:       data.folio_number?.trim() || '',
+        scheme_code:        data.scheme_code?.trim() || '',
         price_history:      ph,
       }
     }
@@ -812,6 +852,7 @@ function buildRecord(assetClass, data) {
         buy_price_per_gram_paise:      buyPaise,
         current_price_per_gram_paise:  currentPaise,
         buy_date:                      data.buy_date,
+        use_live_price:                !!data.use_live_price,
         price_history:                 ph,
       }
     }
@@ -854,6 +895,7 @@ function hydrateForm(inv) {
         current_nav:  String((inv.current_nav_paise || 0) / 100),
         buy_date:     inv.buy_date || '',
         folio_number: inv.folio_number || '',
+        scheme_code:  inv.scheme_code || '',
       }
     case 'fd':
       return {
@@ -880,6 +922,7 @@ function hydrateForm(inv) {
         buy_price_per_gram:       String((inv.buy_price_per_gram_paise || 0) / 100),
         current_price_per_gram:   String((inv.current_price_per_gram_paise || 0) / 100),
         buy_date:                 inv.buy_date || '',
+        use_live_price:           !!inv.use_live_price,
       }
     case 'real_estate':
       return {

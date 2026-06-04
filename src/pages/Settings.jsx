@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Shield, Lock, ShieldCheck, Trash2, AlertTriangle, CheckCircle2, Settings, Sparkles, Eye, EyeOff } from 'lucide-react'
+import { Shield, Lock, ShieldCheck, Trash2, AlertTriangle, CheckCircle2, Settings, Sparkles, Eye, EyeOff, TrendingUp, Loader2 } from 'lucide-react'
 import { useAppStore } from '../store/appStore.js'
 import { nukeDatabase } from '../db/schema.js'
 import { saveApiKey, loadApiKey } from '../utils/loanDocExtract.js'
+import { saveGoldApiKey, loadGoldApiKey, testGoldApiKey } from '../ai/livePrices.js'
+import { formatINRFromPaise } from '../utils/currency.js'
 
 const APP_VERSION = '0.1.0'
 const RESET_PHRASE = 'RESET'
@@ -244,6 +246,115 @@ function AiSection() {
   )
 }
 
+function LivePricesSection() {
+  const cryptoKey = useAppStore((s) => s.cryptoKey)
+  const [apiKey, setApiKey]   = useState('')
+  const [showKey, setShowKey] = useState(false)
+  const [saved, setSaved]     = useState(false)
+  const [saving, setSaving]   = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState(null) // { ok, pricePaise?, error? }
+
+  useEffect(() => {
+    loadGoldApiKey(cryptoKey).then((k) => { if (k) setApiKey(k) })
+  }, [cryptoKey])
+
+  async function handleSave() {
+    setSaving(true)
+    await saveGoldApiKey(apiKey, cryptoKey)
+    setSaving(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  async function handleTest() {
+    setTesting(true)
+    setTestResult(null)
+    const result = await testGoldApiKey(apiKey)
+    setTestResult(result)
+    setTesting(false)
+  }
+
+  const inputStyle = {
+    background: 'rgba(255,255,255,0.05)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 10,
+    padding: '10px 44px 10px 12px',
+    fontSize: 13,
+    color: '#ffffff',
+    caretColor: '#ffffff',
+    outline: 'none',
+    width: '100%',
+    fontFamily: apiKey && !showKey ? 'monospace' : 'inherit',
+  }
+
+  return (
+    <div className="px-5 py-4 space-y-3">
+      <div>
+        <p className="text-sm font-medium text-white/80">GoldAPI Key</p>
+        <p className="text-xs text-white/30 mt-0.5">
+          Enables live gold prices on your investments. Stored encrypted with your vault key.
+          Stocks and mutual funds fetch live prices without any key.
+        </p>
+      </div>
+      <div className="flex gap-2 items-center">
+        <div className="relative flex-1">
+          <input
+            type={showKey ? 'text' : 'password'}
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="goldapi-…"
+            style={inputStyle}
+          />
+          <button
+            onClick={() => setShowKey((v) => !v)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
+            style={{ minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 flex-shrink-0"
+          style={{ background: saved ? '#10B981' : '#6366F1', minHeight: 44 }}
+        >
+          {saved ? '✓ Saved' : saving ? '…' : 'Save'}
+        </button>
+        <button
+          onClick={handleTest}
+          disabled={testing || !apiKey.trim()}
+          className="px-3 py-2.5 rounded-xl text-sm font-medium text-white/60 border border-white/10 hover:bg-white/5 transition-all flex-shrink-0 disabled:opacity-30 flex items-center gap-1.5"
+          style={{ minHeight: 44 }}
+        >
+          {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TrendingUp className="w-3.5 h-3.5" />}
+          Test
+        </button>
+      </div>
+
+      {testResult && (
+        <div
+          className="rounded-lg px-3 py-2 text-xs"
+          style={{
+            background: testResult.ok ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+            border: `1px solid ${testResult.ok ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
+            color: testResult.ok ? '#6EE7B7' : '#FCA5A5',
+          }}
+        >
+          {testResult.ok
+            ? `✓ Connected — gold is ${formatINRFromPaise(testResult.pricePaise)}/gram (24k)`
+            : `✕ ${testResult.error}`}
+        </div>
+      )}
+
+      <p className="text-[10px] text-white/20">
+        Get your free key at <span className="text-indigo-400">goldapi.io</span> · Only the request is sent — no portfolio data ever leaves your device
+      </p>
+    </div>
+  )
+}
+
 export default function SettingsPage() {
   const { lock } = useAppStore()
 
@@ -316,6 +427,10 @@ export default function SettingsPage() {
 
       <Section title="AI Features">
         <AiSection />
+      </Section>
+
+      <Section title="Live Prices">
+        <LivePricesSection />
       </Section>
 
       <Section title="Danger Zone">

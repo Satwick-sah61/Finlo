@@ -21,6 +21,10 @@ export const useAppStore = create((set, get) => ({
   // Cleared on lock/nuke so stale data never persists across sessions
   investmentNews: null,
 
+  // Session-level live-price cache
+  // Shape: { prices: { [id]: paise }, lastFetched: number } | null
+  livePrices: null,
+
   setAppState: (appState) => set({ appState }),
 
   unlock: (cryptoKey, needsOnboarding = false) =>
@@ -33,6 +37,7 @@ export const useAppStore = create((set, get) => ({
     appState: APP_STATE.LOCKED,
     loanInsightCache: null,
     investmentNews: null,
+    livePrices: null,
   }),
 
   // Wipes all local state — called after DB deletion in Settings
@@ -41,10 +46,12 @@ export const useAppStore = create((set, get) => ({
     appState: APP_STATE.SETUP,
     loanInsightCache: null,
     investmentNews: null,
+    livePrices: null,
   }),
 
   setLoanInsightCache: (cache) => set({ loanInsightCache: cache }),
   setInvestmentNews:   (news)  => set({ investmentNews: news }),
+  setLivePrices:       (data)  => set({ livePrices: data }),
 
   isUnlocked: () => {
     const s = get().appState

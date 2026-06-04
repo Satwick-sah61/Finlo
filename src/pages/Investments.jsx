@@ -31,7 +31,9 @@ import InvestmentNewsPanel from '../components/investments/InvestmentNewsPanel.j
 import SIPTracker from '../components/investments/SIPTracker.jsx'
 import RebalancingPanel from '../components/investments/RebalancingPanel.jsx'
 import UpdateAllPricesModal from '../components/investments/UpdateAllPricesModal.jsx'
+import InvestmentSkeleton from '../components/investments/InvestmentSkeleton.jsx'
 import { buildChartData } from '../components/investments/PortfolioValueChart.jsx'
+import { useLivePrices } from '../hooks/useLivePrices.js'
 
 // ─── Filter / sort config ─────────────────────────────────────────────────────
 
@@ -352,6 +354,26 @@ export default function Investments() {
   const [showUpdateAll, setShowUpdateAll] = useState(false)
   const [dismissed,     setDismissed]     = useState(new Set())
 
+  // Live price fetching (stocks/MF/gold) with 60-min session gate
+  const { fetching: pricesFetching, canRefresh, lastFetched, refresh: refreshPrices } = useLivePrices()
+
+  async function handleRefreshPrices() {
+    await refreshPrices(enrichedInvestments, true) // force = manual click
+    refresh() // reload investments from DB to show new prices
+  }
+
+  // "Updated X mins ago" label
+  const lastFetchedLabel = lastFetched
+    ? (() => {
+        const mins = Math.round((Date.now() - lastFetched) / 60000)
+        if (mins < 1) return 'Updated just now'
+        if (mins === 1) return 'Updated 1 min ago'
+        if (mins < 60) return `Updated ${mins} mins ago`
+        const hrs = Math.round(mins / 60)
+        return `Updated ${hrs} hr${hrs !== 1 ? 's' : ''} ago`
+      })()
+    : null
+
   const allReminders = useMemo(
     () => (!loading && enrichedInvestments.length ? generateInvestmentReminders(enrichedInvestments) : []),
     [enrichedInvestments, loading]
@@ -406,12 +428,24 @@ export default function Investments() {
           {hasData && (
             <>
               <button
+                onClick={handleRefreshPrices}
+                disabled={pricesFetching || (!canRefresh)}
+                title={canRefresh ? 'Fetch live prices (stocks, MFs, gold)' : 'Live prices refresh once per hour'}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all disabled:opacity-40"
+                style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', color: '#6EE7B7' }}
+              >
+                <RefreshCw className={`w-4 h-4 ${pricesFetching ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">
+                  {pricesFetching ? 'Fetching…' : lastFetchedLabel ? lastFetchedLabel : 'Refresh Prices'}
+                </span>
+              </button>
+              <button
                 onClick={() => setShowUpdateAll(true)}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium text-white/40 hover:text-white/70 hover:bg-white/6 transition-all"
-                title="Bulk update prices for stocks, MFs, gold"
+                title="Manually update prices for stocks, MFs, gold"
               >
-                <RefreshCw className="w-4 h-4" />
-                <span className="hidden sm:inline">Update Prices</span>
+                <Pencil className="w-4 h-4" />
+                <span className="hidden sm:inline">Manual</span>
               </button>
               <button
                 onClick={() => exportPortfolio({ enrichedInvestments, totalInvested, currentValue, totalGainLoss, totalGainLossPct, assetAllocation })}
@@ -463,12 +497,7 @@ export default function Investments() {
       )}
 
       {/* ── Loading ───────────────────────────────────────────────────────── */}
-      {loading && (
-        <div className="space-y-4">
-          <div className="flex gap-3">{[0,1,2,3].map((i) => <Skeleton key={i} className="flex-1 h-20" />)}</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{[0,1,2,3].map((i) => <Skeleton key={i} className="h-52" />)}</div>
-        </div>
-      )}
+      {loading && <InvestmentSkeleton />}
 
       {/* ── Empty state ───────────────────────────────────────────────────── */}
       {!loading && !error && !hasData && (
