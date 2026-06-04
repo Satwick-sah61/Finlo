@@ -11,6 +11,88 @@ import { configGet, configSet } from '../db/schema.js'
 import { EXPENSE_CATEGORIES, getCategoryMeta, toMonthlyPaise } from '../utils/finance.js'
 import { formatINRFromPaise, formatINRCompact } from '../utils/currency.js'
 import { getGoalTypeMeta } from '../utils/goalStatus.js'
+import DailyMonthlyToggle from '../components/shared/DailyMonthlyToggle.jsx'
+
+// Variable-spend categories that get the daily/monthly budget toggle
+// (maps the spec's Miscellaneous / Dining Out / Entertainment / Personal Care
+//  onto Finio's top-level category model)
+const TOGGLE_BUDGET_CATEGORIES = ['food', 'transport', 'lifestyle', 'miscellaneous']
+
+// Compute per-category monthly budget targets from a framework + income.
+// Splits each bucket's target evenly across its mapped categories.
+function computeFrameworkTargets(framework, monthlyIncomePaise) {
+  if (!framework || !monthlyIncomePaise) return {}
+  const targets = {}
+  const map = framework.categoryMap || {}
+  const bucketCats = {}
+  for (const [cat, bucket] of Object.entries(map)) {
+    if (!bucketCats[bucket]) bucketCats[bucket] = []
+    bucketCats[bucket].push(cat)
+  }
+  for (const bucket of (framework.buckets || [])) {
+    const cats = bucketCats[bucket.id] || []
+    if (!cats.length) continue
+    const bucketPaise = Math.round(monthlyIncomePaise * bucket.targetPct / 100)
+    const perCat = Math.round(bucketPaise / cats.length)
+    for (const cat of cats) targets[cat] = perCat
+  }
+  return targets
+}
+
+// ─── Budget Planner (daily/monthly toggle for variable categories) ────────────
+
+function BudgetPlanner({ framework, targets, budgets, onBudgetSave }) {
+  const [open, setOpen] = useState(false)
+  const cats = TOGGLE_BUDGET_CATEGORIES
+    .map((id) => EXPENSE_CATEGORIES.find((c) => c.id === id))
+    .filter(Boolean)
+
+  return (
+    <div className="glass rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/3 transition-colors"
+        style={{ minHeight: 44 }}
+      >
+        <div className="flex items-center gap-2">
+          <Wallet className="w-4 h-4 text-indigo-400" />
+          <span className="text-sm font-semibold text-white">Budget Planner</span>
+          {framework && (
+            <span className="text-[10px] text-white/30 bg-white/5 px-2 py-0.5 rounded-full">
+              {framework.name}
+            </span>
+          )}
+        </div>
+        <ChevronDown className={`w-4 h-4 text-white/30 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 space-y-2">
+          <p className="text-[11px] text-white/35 leading-relaxed">
+            Set monthly budgets for your variable-spend categories. Toggle to <strong>Daily</strong> to
+            think per-day — it's stored as the monthly amount (× 30).
+          </p>
+          {cats.map((cat) => (
+            <DailyMonthlyToggle
+              key={cat.id}
+              valuePaise={Number(budgets[cat.id]) || 0}
+              onChange={(paise) => onBudgetSave(cat.id, paise)}
+              label={cat.label}
+              emoji={cat.emoji}
+              frameworkTarget={targets[cat.id] || 0}
+              hasToggle
+            />
+          ))}
+          {!framework && (
+            <p className="text-[10px] text-white/25">
+              Pick a framework in <span className="text-indigo-400/70">Salary Planner</span> to see budget targets here.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ─── Month navigation ─────────────────────────────────────────────────────────
 
@@ -676,6 +758,7 @@ export default function Expenses() {
   const [prevMonthExpenses, setPrevMonthExpenses] = useState([])
   const [totalIncomePaise, setTotalIncomePaise] = useState(0)
   const [budgets, setBudgets] = useState({}) // { [categoryId]: paise }
+  const [framework, setFramework] = useState(null) // selected budget framework (from app_config)
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState(null)
@@ -695,12 +778,13 @@ export default function Expenses() {
     if (!cryptoKey) return
     setLoading(true)
     try {
-      const [exps, prevExps, streams, budgetsJson, goalsData] = await Promise.all([
+      const [exps, prevExps, streams, budgetsJson, goalsData, frameworkJson] = await Promise.all([
         decryptAndLoadAll('expenses', cryptoKey, { month }),
         decryptAndLoadAll('expenses', cryptoKey, { month: prevMonth }),
         decryptAndLoadAll('income_streams', cryptoKey),
         configGet('expense_budgets'),
         decryptAndLoadAll('goals', cryptoKey),
+        configGet('budget_framework'),
       ])
       setExpenses(exps)
       setPrevMonthExpenses(prevExps)
@@ -711,6 +795,7 @@ export default function Expenses() {
       )
       setTotalIncomePaise(incTotal)
       try { setBudgets(budgetsJson ? JSON.parse(budgetsJson) : {}) } catch { setBudgets({}) }
+      try { setFramework(frameworkJson ? JSON.parse(frameworkJson) : null) } catch { setFramework(null) }
     } catch (err) {
       console.error('[finio/Expenses] Load failed:', err)
     } finally {
@@ -861,6 +946,7 @@ export default function Expenses() {
   const prevTotalPaise = prevMonthExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0)
   const isFiltered = query.trim() !== '' || categoryFilter !== ''
   const surplusPaise = totalIncomePaise - totalExpensePaise
+  const frameworkTargets = computeFrameworkTargets(framework, totalIncomePaise)
   const hasActiveGoals = goals.some((g) => {
     const saved = Number(g.saved_amount) || 0
     const target = Number(g.target_amount) || 0
@@ -910,6 +996,16 @@ export default function Expenses() {
 
       {/* Overspend banner */}
       <OverspendBanner expenses={expenses} budgets={budgets} />
+
+      {/* Budget Planner — daily/monthly toggle for variable categories */}
+      {!loading && (
+        <BudgetPlanner
+          framework={framework}
+          targets={frameworkTargets}
+          budgets={budgets}
+          onBudgetSave={handleBudgetSave}
+        />
+      )}
 
       {/* Month summary */}
       {expenses.length > 0 && (
