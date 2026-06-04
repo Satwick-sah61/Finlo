@@ -5,6 +5,7 @@ import { nukeDatabase } from '../db/schema.js'
 import { saveApiKey, loadApiKey } from '../utils/loanDocExtract.js'
 import { saveGoldApiKey, loadGoldApiKey, testGoldApiKey } from '../ai/livePrices.js'
 import { formatINRFromPaise } from '../utils/currency.js'
+import { buildContext } from '../ai/contextBuilder.js'
 
 const APP_VERSION = '0.1.0'
 const RESET_PHRASE = 'RESET'
@@ -355,8 +356,78 @@ function LivePricesSection() {
   )
 }
 
+// ─── Developer: context viewer (only when ?debug=true) ────────────────────────
+
+function DeveloperSection() {
+  const cryptoKey = useAppStore((s) => s.cryptoKey)
+  const [ctx, setCtx]       = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [open, setOpen]     = useState(false)
+
+  async function viewContext() {
+    setLoading(true)
+    try {
+      const built = await buildContext(cryptoKey)
+      setCtx(built)
+      setOpen(true)
+    } catch (err) {
+      setCtx({ error: err.message })
+      setOpen(true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <>
+      <Row
+        label="View Current Context"
+        sublabel="Inspect the exact anonymized object sent to Claude (Phase 4)"
+        right={
+          <button
+            onClick={viewContext}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 text-xs font-medium transition-all disabled:opacity-40"
+          >
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            {loading ? 'Building…' : 'View'}
+          </button>
+        }
+      />
+
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.7)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl flex flex-col shadow-2xl"
+            style={{ background: '#1C1B29', border: '1px solid rgba(255,255,255,0.1)', maxHeight: '80vh' }}
+          >
+            <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <p className="text-sm font-semibold text-white">FinioContext (debug)</p>
+              <button onClick={() => setOpen(false)} className="text-white/40 hover:text-white">
+                <Trash2 className="w-4 h-4 rotate-0" style={{ display: 'none' }} />
+                ✕
+              </button>
+            </div>
+            <pre
+              className="flex-1 overflow-auto p-4 text-[11px] leading-relaxed font-mono"
+              style={{ color: '#A5B4FC', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+            >
+              {JSON.stringify(ctx, null, 2)}
+            </pre>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 export default function SettingsPage() {
   const { lock } = useAppStore()
+  const isDebug = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === 'true'
 
   return (
     <div className="space-y-8 max-w-2xl">
@@ -432,6 +503,12 @@ export default function SettingsPage() {
       <Section title="Live Prices">
         <LivePricesSection />
       </Section>
+
+      {isDebug && (
+        <Section title="Developer">
+          <DeveloperSection />
+        </Section>
+      )}
 
       <Section title="Danger Zone">
         <DangerZone />

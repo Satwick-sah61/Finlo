@@ -25,6 +25,14 @@ export const useAppStore = create((set, get) => ({
   // Shape: { prices: { [id]: paise }, lastFetched: number } | null
   livePrices: null,
 
+  // Session-level AI context cache (built by ai/contextBuilder.js)
+  // Shape: object | null
+  finioContext: null,
+
+  // Monotonic counter — bumped whenever financial data changes.
+  // useFinioContext watches this and rebuilds the context automatically.
+  dataVersion: 0,
+
   setAppState: (appState) => set({ appState }),
 
   unlock: (cryptoKey, needsOnboarding = false) =>
@@ -38,6 +46,7 @@ export const useAppStore = create((set, get) => ({
     loanInsightCache: null,
     investmentNews: null,
     livePrices: null,
+    finioContext: null,
   }),
 
   // Wipes all local state — called after DB deletion in Settings
@@ -47,11 +56,17 @@ export const useAppStore = create((set, get) => ({
     loanInsightCache: null,
     investmentNews: null,
     livePrices: null,
+    finioContext: null,
+    dataVersion: 0,
   }),
 
   setLoanInsightCache: (cache) => set({ loanInsightCache: cache }),
   setInvestmentNews:   (news)  => set({ investmentNews: news }),
   setLivePrices:       (data)  => set({ livePrices: data }),
+  setFinioContext:     (ctx)   => set({ finioContext: ctx }),
+
+  // Call after any write that changes the financial picture (the "DATA_CHANGED" event).
+  notifyDataChanged:   () => set((s) => ({ dataVersion: s.dataVersion + 1 })),
 
   isUnlocked: () => {
     const s = get().appState
