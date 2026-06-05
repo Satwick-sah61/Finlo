@@ -16,6 +16,7 @@ import { format } from 'date-fns'
 import { useAppStore } from '../store/appStore.js'
 import { encryptAndSave } from '../db/helpers.js'
 import { decryptAndLoadAll } from '../db/helpers.js'
+import { createTransaction } from '../db/transactions.js'
 
 // ─── Quick category display → Finio category mapping ─────────────────────────
 
@@ -55,20 +56,37 @@ export function useQuickLog() {
     if (!cryptoKey) throw new Error('Vault locked')
     if (!amountPaise || amountPaise <= 0) throw new Error('Amount must be positive')
 
-    // encryptAndSave fires the DATA_CHANGED event centrally (db/helpers.js)
-    return encryptAndSave(
+    const logDate = date || format(new Date(), 'yyyy-MM-dd')
+
+    // 1. expense_logs row — drives the "Today's Logs" widget
+    //    (encryptAndSave fires DATA_CHANGED centrally in db/helpers.js)
+    const result = await encryptAndSave(
       'expense_logs',
       {
         amount:     amountPaise,
         category,               // also stored plaintext via extraPlain below
         note:       note.trim(),
-        date:       date || format(new Date(), 'yyyy-MM-dd'),
+        date:       logDate,
         logged_at:  new Date(),
         source,
       },
       cryptoKey,
       ['date', 'category'],     // plaintext for Dexie index queries
     )
+
+    // 2. expense transaction — confirmed outflow, the source of truth for
+    //    current-month "Spent". This is what makes the Dashboard real.
+    await createTransaction({
+      type:      'expense',
+      direction: 'out',
+      status:    'confirmed',
+      amount:    amountPaise,
+      category,
+      date:      logDate,
+      note:      note.trim() || 'Quick log',
+    }, cryptoKey)
+
+    return result
   }, [cryptoKey])
 
   /**

@@ -306,7 +306,35 @@ export default function Dashboard() {
     totalGainLoss: invGainLoss, totalGainLossPct: invGainLossPct,
     loading: invLoading,
   } = useInvestments()
-  const { pendingCount } = useTransactions(month)
+  const { pendingCount, transactions: monthTxns } = useTransactions(month)
+
+  // ── Current-month figures sourced from the transaction ledger ──────────────
+  // Clean model: expenses start at ₹0 and only grow as the user logs them.
+  //   income    = confirmed inflow
+  //   committed = pending OR confirmed loan/SIP/goal outflow
+  //   spent     = confirmed expense outflow (₹0 until something is logged)
+  //   surplus   = income − committed − spent
+  const txn = useMemo(() => {
+    const sum = (arr) => arr.reduce((s, t) => s + (Number(t.amount) || 0), 0)
+    const incomeTxns    = monthTxns.filter((t) => t.direction === 'in'  && t.status === 'confirmed')
+    const committedTxns = monthTxns.filter((t) => t.direction === 'out'
+      && ['loan_emi', 'sip', 'goal_saving'].includes(t.type)
+      && (t.status === 'pending' || t.status === 'confirmed'))
+    const spentTxns     = monthTxns.filter((t) => t.direction === 'out' && t.type === 'expense' && t.status === 'confirmed')
+
+    const income    = sum(incomeTxns)
+    const committed = sum(committedTxns)
+    const spent     = sum(spentTxns)
+    return {
+      hasAny:    monthTxns.length > 0,
+      hasIncome: incomeTxns.length > 0,
+      hasSpent:  spentTxns.length > 0,
+      income, committed, spent,
+      surplus:     income - committed - spent,
+      savingsRate: income > 0 ? Math.round(((income - committed - spent) / income) * 100) : 0,
+    }
+  }, [monthTxns])
+
   const [lastUpdated, setLastUpdated] = useState(null)
   const [showReport, setShowReport] = useState(false)
   const [surplusChartType, setSurplusChartType] = useState('donut')
@@ -467,61 +495,123 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            label="Monthly Income"
-            rawValue={totalMonthlyIncomePaise}
-            displayValue={totalMonthlyIncomePaise > 0 ? formatINRFromPaise(totalMonthlyIncomePaise) : '—'}
-            sub={totalMonthlyIncomePaise > 0 ? `${incomeStreams.length} stream${incomeStreams.length !== 1 ? 's' : ''}` : 'Add income streams'}
-            valueColor="text-green-400"
-            animate={totalMonthlyIncomePaise > 0}
-          />
-          <StatCard
-            label="Monthly Expenses"
-            rawValue={totalMonthlyExpensesPaise}
-            displayValue={totalMonthlyExpensesPaise > 0 ? formatINRFromPaise(totalMonthlyExpensesPaise) : '—'}
-            sub={totalMonthlyExpensesPaise > 0
-              ? totalMonthlyIncomePaise > 0
-                ? `${Math.round((totalMonthlyExpensesPaise / totalMonthlyIncomePaise) * 100)}% of income`
-                : 'Log expenses'
-              : 'No expenses this month'}
-            valueColor="text-orange-400"
-            mom={expenseMoM}
-            momUnit="%"
-            animate={totalMonthlyExpensesPaise > 0}
-          />
-          <StatCard
-            label="Free Monthly Surplus"
-            rawValue={Math.abs(effectiveSurplusPaise)}
-            displayValue={totalMonthlyIncomePaise > 0 ? formatINRFromPaise(Math.abs(effectiveSurplusPaise)) : '—'}
-            sub={
-              totalMonthlyIncomePaise === 0 ? undefined
-              : effectiveSurplusPaise < 0 ? `${formatINRCompact(Math.abs(effectiveSurplusPaise))} over budget`
-              : goalAllocatedPaise > 0 ? `after ${formatINRCompact(goalAllocatedPaise)}/mo to ${goals.filter(g => (Number(g.saved_amount)||0) < (Number(g.target_amount)||0) && g.status !== 'Completed').length} goal${goals.filter(g => (Number(g.saved_amount)||0) < (Number(g.target_amount)||0) && g.status !== 'Completed').length !== 1 ? 's' : ''}`
-              : surplusPaise > 0 ? 'No active goals yet' : 'Deficit this month'
-            }
-            valueColor={
-              totalMonthlyIncomePaise === 0 ? 'text-white/20'
-              : effectiveSurplusPaise >= 0 ? 'text-green-400' : 'text-red-400'
-            }
-            animate={totalMonthlyIncomePaise > 0}
-          />
-          <StatCard
-            label="Savings Rate"
-            displayValue={totalMonthlyIncomePaise > 0 ? `${savingsRate}%` : '—'}
-            sub={
-              savingsRate >= 30 ? 'Excellent' :
-              savingsRate >= 20 ? 'Good' :
-              savingsRate >= 10 ? 'Fair — aim for 20%' :
-              totalMonthlyIncomePaise > 0 ? 'Needs improvement' : 'Add income'
-            }
-            valueColor={
-              totalMonthlyIncomePaise === 0 ? 'text-white/20'
-              : savingsRate >= 20 ? 'text-green-400'
-              : savingsRate >= 10 ? 'text-amber-400' : 'text-red-400'
-            }
-            mom={savingsRateMoM}
-            momUnit="pts"
-          />
+          {txn.hasAny ? (
+            <StatCard
+              label="Monthly Income"
+              rawValue={txn.income}
+              displayValue={txn.income > 0 ? formatINRFromPaise(txn.income) : '—'}
+              sub={txn.income > 0 ? 'confirmed this month' : 'No income confirmed yet'}
+              valueColor="text-green-400"
+              animate={txn.income > 0}
+            />
+          ) : (
+            <StatCard
+              label="Monthly Income"
+              badge="Estimated"
+              rawValue={totalMonthlyIncomePaise}
+              displayValue={totalMonthlyIncomePaise > 0 ? formatINRFromPaise(totalMonthlyIncomePaise) : '—'}
+              sub={totalMonthlyIncomePaise > 0 ? `${incomeStreams.length} stream${incomeStreams.length !== 1 ? 's' : ''}` : 'Add income streams'}
+              valueColor="text-green-400"
+              animate={totalMonthlyIncomePaise > 0}
+            />
+          )}
+          {txn.hasAny ? (
+            <StatCard
+              label="Spent This Month"
+              rawValue={txn.spent}
+              displayValue={txn.hasSpent ? formatINRFromPaise(txn.spent) : '₹0'}
+              sub={txn.hasSpent
+                ? (txn.income > 0 ? `${Math.round((txn.spent / txn.income) * 100)}% of income` : 'logged this month')
+                : 'No expenses logged yet this month'}
+              valueColor={txn.hasSpent ? 'text-orange-400' : 'text-white/30'}
+              animate={txn.hasSpent}
+            />
+          ) : (
+            <StatCard
+              label="Monthly Expenses"
+              badge="Estimated"
+              rawValue={totalMonthlyExpensesPaise}
+              displayValue={totalMonthlyExpensesPaise > 0 ? formatINRFromPaise(totalMonthlyExpensesPaise) : '—'}
+              sub={totalMonthlyExpensesPaise > 0
+                ? totalMonthlyIncomePaise > 0
+                  ? `${Math.round((totalMonthlyExpensesPaise / totalMonthlyIncomePaise) * 100)}% of income`
+                  : 'Log expenses'
+                : 'No expenses this month'}
+              valueColor="text-orange-400"
+              mom={expenseMoM}
+              momUnit="%"
+              animate={totalMonthlyExpensesPaise > 0}
+            />
+          )}
+          {txn.hasAny ? (
+            <StatCard
+              label="Free Surplus"
+              rawValue={Math.abs(txn.surplus)}
+              displayValue={txn.hasIncome ? formatINRFromPaise(Math.abs(txn.surplus)) : '—'}
+              sub={
+                !txn.hasIncome ? 'No income confirmed yet'
+                : txn.surplus < 0 ? `${formatINRCompact(Math.abs(txn.surplus))} over income`
+                : `after ${formatINRCompact(txn.committed)} committed + ${formatINRCompact(txn.spent)} spent`
+              }
+              valueColor={!txn.hasIncome ? 'text-white/20' : txn.surplus >= 0 ? 'text-green-400' : 'text-red-400'}
+              animate={txn.hasIncome}
+            />
+          ) : (
+            <StatCard
+              label="Free Monthly Surplus"
+              badge="Estimated"
+              rawValue={Math.abs(effectiveSurplusPaise)}
+              displayValue={totalMonthlyIncomePaise > 0 ? formatINRFromPaise(Math.abs(effectiveSurplusPaise)) : '—'}
+              sub={
+                totalMonthlyIncomePaise === 0 ? undefined
+                : effectiveSurplusPaise < 0 ? `${formatINRCompact(Math.abs(effectiveSurplusPaise))} over budget`
+                : goalAllocatedPaise > 0 ? `after ${formatINRCompact(goalAllocatedPaise)}/mo to ${goals.filter(g => (Number(g.saved_amount)||0) < (Number(g.target_amount)||0) && g.status !== 'Completed').length} goal${goals.filter(g => (Number(g.saved_amount)||0) < (Number(g.target_amount)||0) && g.status !== 'Completed').length !== 1 ? 's' : ''}`
+                : surplusPaise > 0 ? 'No active goals yet' : 'Deficit this month'
+              }
+              valueColor={
+                totalMonthlyIncomePaise === 0 ? 'text-white/20'
+                : effectiveSurplusPaise >= 0 ? 'text-green-400' : 'text-red-400'
+              }
+              animate={totalMonthlyIncomePaise > 0}
+            />
+          )}
+          {txn.hasAny ? (
+            <StatCard
+              label="Savings Rate"
+              displayValue={txn.hasIncome ? `${txn.savingsRate}%` : '—'}
+              sub={
+                !txn.hasIncome ? 'No income confirmed yet'
+                : txn.savingsRate >= 30 ? 'Excellent'
+                : txn.savingsRate >= 20 ? 'Good'
+                : txn.savingsRate >= 10 ? 'Fair — aim for 20%'
+                : 'Needs improvement'
+              }
+              valueColor={
+                !txn.hasIncome ? 'text-white/20'
+                : txn.savingsRate >= 20 ? 'text-green-400'
+                : txn.savingsRate >= 10 ? 'text-amber-400' : 'text-red-400'
+              }
+            />
+          ) : (
+            <StatCard
+              label="Savings Rate"
+              badge="Estimated"
+              displayValue={totalMonthlyIncomePaise > 0 ? `${savingsRate}%` : '—'}
+              sub={
+                savingsRate >= 30 ? 'Excellent' :
+                savingsRate >= 20 ? 'Good' :
+                savingsRate >= 10 ? 'Fair — aim for 20%' :
+                totalMonthlyIncomePaise > 0 ? 'Needs improvement' : 'Add income'
+              }
+              valueColor={
+                totalMonthlyIncomePaise === 0 ? 'text-white/20'
+                : savingsRate >= 20 ? 'text-green-400'
+                : savingsRate >= 10 ? 'text-amber-400' : 'text-red-400'
+              }
+              mom={savingsRateMoM}
+              momUnit="pts"
+            />
+          )}
         </div>
       )}
 
