@@ -12,6 +12,7 @@ import { EXPENSE_CATEGORIES, getCategoryMeta, toMonthlyPaise } from '../utils/fi
 import { formatINRFromPaise, formatINRCompact } from '../utils/currency.js'
 import { getGoalTypeMeta } from '../utils/goalStatus.js'
 import DailyMonthlyToggle from '../components/shared/DailyMonthlyToggle.jsx'
+import { getMonthTransactions, createTransaction, removeTransaction } from '../db/transactions.js'
 
 // Variable-spend categories that get the daily/monthly budget toggle
 // (maps the spec's Miscellaneous / Dining Out / Entertainment / Personal Care
@@ -632,7 +633,7 @@ function GoalAllocationPanel({ goals, surplusPaise }) {
 
 // ─── Category Group ───────────────────────────────────────────────────────────
 
-function CategoryGroup({ cat, expenses, totalIncomePaise, budget, onBudgetSave, recurringIds, onEdit, onDelete }) {
+function CategoryGroup({ cat, expenses, totalIncomePaise, budget, onBudgetSave, recurringIds, onEdit, onDelete, baselineEstimate = 0 }) {
   const catTotal = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
   const pct = totalIncomePaise > 0 ? Math.min(100, (catTotal / totalIncomePaise) * 100) : 0
 
@@ -688,6 +689,13 @@ function CategoryGroup({ cat, expenses, totalIncomePaise, budget, onBudgetSave, 
           </span>
         </div>
       </div>
+
+      {/* Baseline ghost estimate (only when nothing logged for this category) */}
+      {catTotal === 0 && baselineEstimate > 0 && (
+        <div className="px-4 py-1.5 text-[11px] text-white/25 border-b border-white/5">
+          Est. {formatINRFromPaise(baselineEstimate)} based on your setup
+        </div>
+      )}
 
       {/* Budget progress detail row */}
       {hasBudget && (
@@ -759,6 +767,8 @@ export default function Expenses() {
   const [totalIncomePaise, setTotalIncomePaise] = useState(0)
   const [budgets, setBudgets] = useState({}) // { [categoryId]: paise }
   const [framework, setFramework] = useState(null) // selected budget framework (from app_config)
+  const [isHistorical, setIsHistorical] = useState(false) // month < baseline_month
+  const [baselineByCategory, setBaselineByCategory] = useState({}) // onboarding estimate per category (ghost values)
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState(null)
@@ -778,15 +788,51 @@ export default function Expenses() {
     if (!cryptoKey) return
     setLoading(true)
     try {
-      const [exps, prevExps, streams, budgetsJson, goalsData, frameworkJson] = await Promise.all([
-        decryptAndLoadAll('expenses', cryptoKey, { month }),
+      const [prevExps, streams, budgetsJson, goalsData, frameworkJson, baselineMonthCfg] = await Promise.all([
         decryptAndLoadAll('expenses', cryptoKey, { month: prevMonth }),
         decryptAndLoadAll('income_streams', cryptoKey),
         configGet('expense_budgets'),
         decryptAndLoadAll('goals', cryptoKey),
         configGet('budget_framework'),
+        configGet('baseline_month'),
       ])
-      setExpenses(exps)
+
+      const baselineMonth = baselineMonthCfg || format(new Date(), 'yyyy-MM')
+      const historical = month < baselineMonth
+      setIsHistorical(historical)
+
+      if (historical) {
+        // ── Historical months: read the expenses table (baseline estimates) ──
+        const exps = await decryptAndLoadAll('expenses', cryptoKey, { month })
+        setExpenses(exps)
+        setBaselineByCategory({})
+      } else {
+        // ── Current / future months: read from the transaction ledger ──
+        const txns = await getMonthTransactions(month, cryptoKey)
+        const exps = txns
+          .filter((t) => t.type === 'expense' && t.status !== 'skipped')
+          .map((t) => ({
+            id:          t.id,
+            category:    t.category || 'miscellaneous',
+            subcategory: t.note || getCategoryMeta(t.category).label,
+            amount:      t.amount,
+            date:        t.date,
+            month:       t.month || month,
+            notes:       t.note || '',
+            _txn:        true, // marks this record as living in the transactions table
+          }))
+        setExpenses(exps)
+
+        // Baseline ghost values come from the baseline_month expenses (onboarding setup)
+        const baselineExps = await decryptAndLoadAll('expenses', cryptoKey, { month: baselineMonth })
+        const byCat = {}
+        for (const e of baselineExps) {
+          const c = e.category || 'miscellaneous'
+          byCat[c] = (byCat[c] || 0) + (Number(e.amount) || 0)
+        }
+        setBaselineByCategory(byCat)
+      }
+
       setPrevMonthExpenses(prevExps)
       setGoals(goalsData)
       const incTotal = streams.reduce(
@@ -836,23 +882,43 @@ export default function Expenses() {
     setFormError('')
 
     const expMonth = form.date.slice(0, 7)
-    const record = {
+    const amountPaise = Math.round(Number(form.amount) * 100)
+    const note = form.subcategory.trim() || form.notes.trim() || getCategoryMeta(form.category).label
+
+    const tempId = `tmp-${Date.now()}`
+    const tempRecord = {
+      id: tempId, created_at: new Date(),
       category: form.category,
       subcategory: form.subcategory.trim() || getCategoryMeta(form.category).label,
-      amount: Math.round(Number(form.amount) * 100),
+      amount: amountPaise,
       date: form.date,
       month: expMonth,
       notes: form.notes.trim(),
+      _txn: !isHistorical,
     }
-
-    const tempId = `tmp-${Date.now()}`
-    const tempRecord = { id: tempId, created_at: new Date(), ...record }
     setExpenses((prev) => [tempRecord, ...prev])
     setShowForm(false)
 
     try {
-      const newId = await encryptAndSave('expenses', record, cryptoKey, ['month'])
-      setExpenses((prev) => prev.map((e) => (e.id === tempId ? { ...e, id: newId } : e)))
+      if (isHistorical) {
+        // Historical month — write to the expenses table (legacy baseline)
+        const newId = await encryptAndSave('expenses', {
+          category: form.category,
+          subcategory: tempRecord.subcategory,
+          amount: amountPaise,
+          date: form.date,
+          month: expMonth,
+          notes: form.notes.trim(),
+        }, cryptoKey, ['month'])
+        setExpenses((prev) => prev.map((e) => (e.id === tempId ? { ...e, id: newId } : e)))
+      } else {
+        // Current/future month — create a confirmed expense transaction
+        const txn = await createTransaction({
+          type: 'expense', direction: 'out', status: 'confirmed',
+          amount: amountPaise, category: form.category, date: form.date, note,
+        }, cryptoKey)
+        setExpenses((prev) => prev.map((e) => (e.id === tempId ? { ...e, id: txn.id } : e)))
+      }
     } catch (err) {
       console.error('[finio/Expenses] Save failed:', err)
       setExpenses((prev) => prev.filter((e) => e.id !== tempId))
@@ -881,15 +947,27 @@ export default function Expenses() {
     }
 
     const prev = expenses.find((e) => e.id === editTarget.id)
-    setExpenses((list) => list.map((e) => (e.id === editTarget.id ? { ...e, ...updates } : e)))
+    const target = editTarget
+    setExpenses((list) => list.map((e) => (e.id === target.id ? { ...e, ...updates } : e)))
     setEditTarget(null)
 
     try {
-      await encryptAndUpdate('expenses', editTarget.id, updates, cryptoKey, ['month'])
+      if (target._txn) {
+        // Transaction-backed expense (current/future month)
+        await encryptAndUpdate('transactions', target.id, {
+          category: updates.category,
+          amount:   updates.amount,
+          date:     updates.date,
+          month:    expMonth,
+          note:     updates.subcategory,
+        }, cryptoKey, ['date', 'type', 'status', 'month'])
+      } else {
+        await encryptAndUpdate('expenses', target.id, updates, cryptoKey, ['month'])
+      }
     } catch (err) {
       console.error('[finio/Expenses] Update failed:', err)
-      if (prev) setExpenses((list) => list.map((e) => (e.id === editTarget.id ? prev : e)))
-      setEditTarget(editTarget)
+      if (prev) setExpenses((list) => list.map((e) => (e.id === target.id ? prev : e)))
+      setEditTarget(target)
       setFormError('Failed to update. Please try again.')
     } finally {
       setSaving(false)
@@ -907,7 +985,11 @@ export default function Expenses() {
     setDeleteTarget(null)
 
     try {
-      await deleteRecord('expenses', snapshot.id)
+      if (snapshot?._txn) {
+        await removeTransaction(snapshot.id)
+      } else {
+        await deleteRecord('expenses', snapshot.id)
+      }
     } catch (err) {
       console.error('[finio/Expenses] Delete failed:', err)
       if (snapshot) setExpenses((prev) => [snapshot, ...prev])
@@ -994,6 +1076,30 @@ export default function Expenses() {
         open={searchOpen}
       />
 
+      {/* Historical / empty-month banners */}
+      {!loading && isHistorical && (
+        <div
+          className="rounded-xl px-4 py-3 flex items-center gap-3"
+          style={{ background: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.2)' }}
+        >
+          <span className="text-base">🗂️</span>
+          <p className="text-sm text-white/50">
+            Historical estimate — {format(parseISO(`${month}-01`), 'MMMM yyyy')}. This is baseline data from your setup, not logged transactions.
+          </p>
+        </div>
+      )}
+      {!loading && !isHistorical && expenses.length === 0 && (
+        <div
+          className="rounded-xl px-4 py-3 flex items-center gap-3"
+          style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)' }}
+        >
+          <span className="text-base">💸</span>
+          <p className="text-sm text-indigo-200/70">
+            No expenses logged yet this month. Log your first expense using the <strong>+</strong> button.
+          </p>
+        </div>
+      )}
+
       {/* Overspend banner */}
       <OverspendBanner expenses={expenses} budgets={budgets} />
 
@@ -1070,6 +1176,27 @@ export default function Expenses() {
                 Add first expense
               </button>
             </div>
+
+            {/* All categories at ₹0 with baseline ghost estimates (current month) */}
+            {!isHistorical && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {EXPENSE_CATEGORIES.map((cat) => (
+                  <div key={cat.id} className="glass rounded-xl px-4 py-3 flex items-center gap-3">
+                    <span className="text-base">{cat.emoji}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-white/70">{cat.label}</p>
+                      {baselineByCategory[cat.id] > 0 && (
+                        <p className="text-[10px] text-white/25">
+                          Est. {formatINRFromPaise(baselineByCategory[cat.id])} based on your setup
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-sm font-numeric font-semibold text-white/30">₹0</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {hasActiveGoals && (
               <div className="glass rounded-xl overflow-hidden">
                 <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5">
@@ -1097,6 +1224,7 @@ export default function Expenses() {
                 recurringIds={recurringIds}
                 onEdit={(e) => { setEditTarget(e); setFormError('') }}
                 onDelete={setDeleteTarget}
+                baselineEstimate={baselineByCategory[cat.id] || 0}
               />
               {cat.id === 'savings' && hasActiveGoals && (
                 <div className="mt-2">

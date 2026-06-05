@@ -121,9 +121,18 @@ function MoMBadge({ delta, unit = '' }) {
 
 function StatCard({ label, rawValue, displayValue, sub, valueColor = 'text-white', mom, momUnit, animate, badge }) {
   const animated = useCountUp(animate ? (rawValue ?? 0) : 0)
-  const shown = animate && rawValue != null
-    ? displayValue?.replace(/[\d,]+/, formatINRCompact(animated)) ?? displayValue
-    : displayValue
+  // During the count-up, swap in the animated value. formatINRCompact already
+  // includes a ₹, and currency displayValues start with ₹ too — strip the
+  // duplicate so we never render "₹₹1.2L".
+  const shown = (() => {
+    if (!animate || rawValue == null || typeof displayValue !== 'string') return displayValue
+    const compact = formatINRCompact(animated)
+    if (displayValue.trim().startsWith('₹')) {
+      return `₹${compact.replace('₹', '')}`   // single ₹ guaranteed
+    }
+    // Non-currency display (e.g. "32%") — replace the numeric run only
+    return displayValue.replace(/[\d,]+/, compact.replace('₹', ''))
+  })()
 
   return (
     <div className="glass rounded-xl p-5 space-y-1.5 transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/30">
