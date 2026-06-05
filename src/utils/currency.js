@@ -24,8 +24,12 @@ export function toPaise(d) {
   return Math.round(toRupees(d) * 100)
 }
 
-export function formatINR(d, opts = {}) {
-  const amount = toRupees(d)
+// Polymorphic:
+//   formatINR(paiseNumber)   → "₹1,23,456"  (the canonical paise → string)
+//   formatINR(dineroObject)  → formats an existing Dinero amount (legacy callers)
+// Always returns a SINGLE ₹ via Intl currency formatting — never double.
+export function formatINR(value, opts = {}) {
+  const amount = typeof value === 'number' ? value / 100 : toRupees(value)
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',

@@ -9,7 +9,7 @@ import { useAppStore } from '../store/appStore.js'
 import { encryptAndSave, encryptAndUpdate, deleteRecord, decryptAndLoadAll } from '../db/helpers.js'
 import { configGet, configSet } from '../db/schema.js'
 import { EXPENSE_CATEGORIES, getCategoryMeta, toMonthlyPaise } from '../utils/finance.js'
-import { formatINRFromPaise, formatINRCompact } from '../utils/currency.js'
+import { formatINRFromPaise, formatINRCompact, formatINR } from '../utils/currency.js'
 import { getGoalTypeMeta } from '../utils/goalStatus.js'
 import DailyMonthlyToggle from '../components/shared/DailyMonthlyToggle.jsx'
 import { getMonthTransactions, createTransaction, removeTransaction } from '../db/transactions.js'
@@ -1088,17 +1088,6 @@ export default function Expenses() {
           </p>
         </div>
       )}
-      {!loading && !isHistorical && expenses.length === 0 && (
-        <div
-          className="rounded-xl px-4 py-3 flex items-center gap-3"
-          style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)' }}
-        >
-          <span className="text-base">💸</span>
-          <p className="text-sm text-indigo-200/70">
-            No expenses logged yet this month. Log your first expense using the <strong>+</strong> button.
-          </p>
-        </div>
-      )}
 
       {/* Overspend banner */}
       <OverspendBanner expenses={expenses} budgets={budgets} />
@@ -1177,23 +1166,33 @@ export default function Expenses() {
               </button>
             </div>
 
-            {/* All categories at ₹0 with baseline ghost estimates (current month) */}
+            {/* Variable categories — onboarding estimates shown as normal
+                numbers (the fallback until the user logs real expenses) */}
             {!isHistorical && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {EXPENSE_CATEGORIES.map((cat) => (
-                  <div key={cat.id} className="glass rounded-xl px-4 py-3 flex items-center gap-3">
-                    <span className="text-base">{cat.emoji}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white/70">{cat.label}</p>
-                      {baselineByCategory[cat.id] > 0 && (
-                        <p className="text-[10px] text-white/25">
-                          Est. {formatINRFromPaise(baselineByCategory[cat.id])} based on your setup
-                        </p>
-                      )}
+                {EXPENSE_CATEGORIES.filter((c) => c.id !== 'loans' && c.id !== 'savings').map((cat) => {
+                  const est = baselineByCategory[cat.id] || 0
+                  return (
+                    <div key={cat.id} className="glass rounded-xl px-4 py-3 flex items-center gap-3">
+                      <span className="text-base">{cat.emoji}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm text-white/70">{cat.label}</p>
+                          <span className="text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(148,163,184,0.15)', color: '#94A3B8' }}>
+                            estimated
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => setShowForm(true)}
+                          className="text-[10px] text-indigo-400/70 hover:text-indigo-400 transition-colors"
+                        >
+                          + Log actual
+                        </button>
+                      </div>
+                      <span className="text-sm font-numeric font-semibold text-white/60">{formatINR(est)}</span>
                     </div>
-                    <span className="text-sm font-numeric font-semibold text-white/30">₹0</span>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
 
