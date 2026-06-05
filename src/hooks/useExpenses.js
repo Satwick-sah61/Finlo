@@ -10,6 +10,12 @@
  *
  *   surplus = income − totalFixed − totalVariable
  *
+ * Strict rules (do not double count):
+ *   - Variable NEVER includes loans / savings / goals / investments — those are
+ *     FIXED and are counted only in fixedExpenses. This applies to BOTH the
+ *     onboarding estimates AND any logged transactions.
+ *   - For each category, a logged amount REPLACES the estimate (never added).
+ *
  * All money is integer paise. Rebuilds when the vault's dataVersion bumps.
  */
 
@@ -21,13 +27,17 @@ import { decryptAndLoadAll } from '../db/helpers.js'
 import { configGet } from '../db/schema.js'
 import { toMonthlyPaise, EXPENSE_CATEGORIES } from '../utils/finance.js'
 
-// Variable categories = all expense categories except the fixed-commitment ones
-// ('loans' → EMIs, 'savings' → SIP/goal savings, which are FIXED).
+// Categories that are FIXED commitments — never part of variable spending.
+// 'loans' → EMIs, 'savings' → SIPs, 'goals'/'investments' → goal/SIP savings.
+const FIXED_CATEGORY_IDS = new Set(['loans', 'savings', 'goals', 'investments'])
+
+// Variable categories = every expense category except the fixed-commitment ones.
 export const VARIABLE_CATEGORY_IDS = EXPENSE_CATEGORIES
   .map((c) => c.id)
-  .filter((id) => id !== 'loans' && id !== 'savings')
+  .filter((id) => !FIXED_CATEGORY_IDS.has(id))
 
-const FIXED_TYPES = ['loan_emi', 'sip', 'goal_saving']
+// Fixed transaction types (the auto-generated commitments).
+const FIXED_TXN_TYPES = ['loan_emi', 'sip', 'goal_saving']
 
 function emptyState() {
   const variableByCategory = {}
@@ -79,9 +89,9 @@ export function useExpenses(month = format(new Date(), 'yyyy-MM')) {
         )
         const income = incomeFromTxns > 0 ? incomeFromTxns : incomeFromStreams
 
-        // ── Fixed expenses (committed: pending OR confirmed) ──
+        // ── FIXED expenses (loan EMIs + SIPs + goals; committed) ──
         const fixedExpenses = txns
-          .filter((t) => t.direction === 'out' && FIXED_TYPES.includes(t.type)
+          .filter((t) => t.direction === 'out' && FIXED_TXN_TYPES.includes(t.type)
             && (t.status === 'pending' || t.status === 'confirmed'))
           .map((t) => ({
             type:        t.type,
@@ -94,35 +104,38 @@ export function useExpenses(month = format(new Date(), 'yyyy-MM')) {
           }))
         const totalFixed = fixedExpenses.reduce((s, f) => s + f.amount, 0)
 
-        // ── Variable: logged transactions per category ──
-        const loggedExpenseTxns = txns.filter((t) =>
-          t.direction === 'out' && t.type === 'expense' && t.status === 'confirmed')
+        // ── VARIABLE: logged expense transactions, EXCLUDING fixed categories ──
+        // (Bug 1 guard: a log accidentally filed under loans/savings/goals must
+        //  never enter the variable total — it's already in fixedExpenses.)
         const loggedByCat = {}
-        for (const t of loggedExpenseTxns) {
+        for (const t of txns) {
+          if (t.direction !== 'out' || t.type !== 'expense' || t.status !== 'confirmed') continue
           const c = t.category || 'miscellaneous'
+          if (FIXED_CATEGORY_IDS.has(c)) continue
           loggedByCat[c] = (loggedByCat[c] || 0) + (Number(t.amount) || 0)
         }
+        const hasLoggedExpenses = Object.keys(loggedByCat).length > 0
 
-        // ── Onboarding estimates per category (baseline fallback) ──
+        // ── Onboarding estimates, EXCLUDING fixed categories ──
+        // (The expenses table from onboarding may contain loan/SIP rows — drop
+        //  them so they don't double count against fixedExpenses.)
         const estimateByCat = {}
         for (const e of baselineExps) {
           const c = e.category || 'miscellaneous'
+          if (FIXED_CATEGORY_IDS.has(c)) continue
           estimateByCat[c] = (estimateByCat[c] || 0) + (Number(e.amount) || 0)
         }
 
-        // ── Per-category resolution: logged wins, else estimate ──
+        // ── Per-category resolution: logged REPLACES estimate (never added) ──
         const variableByCategory = {}
-        for (const id of VARIABLE_CATEGORY_IDS) {
-          if (loggedByCat[id] > 0) {
-            variableByCategory[id] = { amount: loggedByCat[id], source: 'logged' }
+        const catIds = new Set([...VARIABLE_CATEGORY_IDS, ...Object.keys(loggedByCat)])
+        for (const id of catIds) {
+          if (FIXED_CATEGORY_IDS.has(id)) continue // belt-and-braces
+          const logged = loggedByCat[id] || 0
+          if (logged > 0) {
+            variableByCategory[id] = { amount: logged, source: 'logged' } // logged ONLY
           } else {
             variableByCategory[id] = { amount: estimateByCat[id] || 0, source: 'estimate' }
-          }
-        }
-        // Any logged category not in the standard variable list (safety)
-        for (const [cat, amt] of Object.entries(loggedByCat)) {
-          if (!(cat in variableByCategory)) {
-            variableByCategory[cat] = { amount: amt, source: 'logged' }
           }
         }
 
@@ -138,7 +151,7 @@ export function useExpenses(month = format(new Date(), 'yyyy-MM')) {
           totalExpenses,
           income,
           surplus: income - totalExpenses,
-          hasLoggedExpenses: loggedExpenseTxns.length > 0,
+          hasLoggedExpenses,
           loading: false,
           error: null,
         })
