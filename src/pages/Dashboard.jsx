@@ -306,17 +306,7 @@ export default function Dashboard() {
     totalGainLoss: invGainLoss, totalGainLossPct: invGainLossPct,
     loading: invLoading,
   } = useInvestments()
-  const {
-    pendingCount,
-    transactions: monthTxns,
-    income:    txnIncome,
-    committed: txnCommitted,
-    spent:     txnSpent,
-    surplus:   txnSurplus,
-  } = useTransactions(month)
-  // Use transaction data as the source for the current month once any exist;
-  // otherwise fall back to baseline estimates (labelled "Estimated").
-  const hasTxns = monthTxns.length > 0
+  const { pendingCount } = useTransactions(month)
   const [lastUpdated, setLastUpdated] = useState(null)
   const [showReport, setShowReport] = useState(false)
   const [surplusChartType, setSurplusChartType] = useState('donut')
@@ -499,56 +489,22 @@ export default function Dashboard() {
             momUnit="%"
             animate={totalMonthlyExpensesPaise > 0}
           />
-          {(() => {
-            // ── Step 1: Surplus card sourced from transactions when available ──
-            if (hasTxns) {
-              const nothingYet = txnIncome === 0 && txnCommitted === 0
-              if (nothingYet) {
-                return (
-                  <StatCard
-                    label="Free Monthly Surplus"
-                    displayValue="—"
-                    sub="No transactions confirmed yet this month"
-                    valueColor="text-white/20"
-                  />
-                )
-              }
-              return (
-                <StatCard
-                  label="Free Monthly Surplus"
-                  rawValue={Math.abs(txnSurplus)}
-                  displayValue={formatINRFromPaise(Math.abs(txnSurplus))}
-                  sub={
-                    txnSurplus < 0
-                      ? `${formatINRCompact(Math.abs(txnSurplus))} over committed`
-                      : `free after ${formatINRCompact(txnCommitted)}/mo committed`
-                  }
-                  valueColor={txnSurplus >= 0 ? 'text-green-400' : 'text-red-400'}
-                  animate
-                />
-              )
+          <StatCard
+            label="Free Monthly Surplus"
+            rawValue={Math.abs(effectiveSurplusPaise)}
+            displayValue={totalMonthlyIncomePaise > 0 ? formatINRFromPaise(Math.abs(effectiveSurplusPaise)) : '—'}
+            sub={
+              totalMonthlyIncomePaise === 0 ? undefined
+              : effectiveSurplusPaise < 0 ? `${formatINRCompact(Math.abs(effectiveSurplusPaise))} over budget`
+              : goalAllocatedPaise > 0 ? `after ${formatINRCompact(goalAllocatedPaise)}/mo to ${goals.filter(g => (Number(g.saved_amount)||0) < (Number(g.target_amount)||0) && g.status !== 'Completed').length} goal${goals.filter(g => (Number(g.saved_amount)||0) < (Number(g.target_amount)||0) && g.status !== 'Completed').length !== 1 ? 's' : ''}`
+              : surplusPaise > 0 ? 'No active goals yet' : 'Deficit this month'
             }
-            // ── Fallback: baseline estimate, labelled "Estimated" ──
-            return (
-              <StatCard
-                label="Free Monthly Surplus"
-                badge="Estimated"
-                rawValue={Math.abs(effectiveSurplusPaise)}
-                displayValue={totalMonthlyIncomePaise > 0 ? formatINRFromPaise(Math.abs(effectiveSurplusPaise)) : '—'}
-                sub={
-                  totalMonthlyIncomePaise === 0 ? undefined
-                  : effectiveSurplusPaise < 0 ? `${formatINRCompact(Math.abs(effectiveSurplusPaise))} over budget`
-                  : goalAllocatedPaise > 0 ? `after ${formatINRCompact(goalAllocatedPaise)}/mo to ${goals.filter(g => (Number(g.saved_amount)||0) < (Number(g.target_amount)||0) && g.status !== 'Completed').length} goal${goals.filter(g => (Number(g.saved_amount)||0) < (Number(g.target_amount)||0) && g.status !== 'Completed').length !== 1 ? 's' : ''}`
-                  : surplusPaise > 0 ? 'No active goals yet' : 'Deficit this month'
-                }
-                valueColor={
-                  totalMonthlyIncomePaise === 0 ? 'text-white/20'
-                  : effectiveSurplusPaise >= 0 ? 'text-green-400' : 'text-red-400'
-                }
-                animate={totalMonthlyIncomePaise > 0}
-              />
-            )
-          })()}
+            valueColor={
+              totalMonthlyIncomePaise === 0 ? 'text-white/20'
+              : effectiveSurplusPaise >= 0 ? 'text-green-400' : 'text-red-400'
+            }
+            animate={totalMonthlyIncomePaise > 0}
+          />
           <StatCard
             label="Savings Rate"
             displayValue={totalMonthlyIncomePaise > 0 ? `${savingsRate}%` : '—'}
